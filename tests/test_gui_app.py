@@ -46,8 +46,29 @@ def test_app_builds_three_tabs(app):
 
 
 def test_window_title(app, root):
-    """The window title matches the application name."""
-    assert root.title() == "Spotify Playlist Generator"
+    """The window title includes the application name and current version."""
+    from spotify_playlist_generator import __version__
+
+    assert root.title() == f"Spotify Playlist Generator — v{__version__}"
+
+
+def _all_label_texts(widget):
+    """Recursively collect the text of every ttk.Label under widget."""
+    texts = []
+    for child in widget.winfo_children():
+        if isinstance(child, __import__("tkinter").ttk.Label):
+            texts.append(child.cget("text"))
+        texts.extend(_all_label_texts(child))
+    return texts
+
+
+def test_version_and_developer_are_visible(app, root):
+    """The version number and developer name appear somewhere in the window."""
+    from spotify_playlist_generator import __version__
+
+    texts = _all_label_texts(root)
+    assert any(__version__ in t for t in texts)
+    assert any("Dennis Krüger" in t for t in texts)
 
 
 def test_set_csv_valid_file(app, tmp_path):

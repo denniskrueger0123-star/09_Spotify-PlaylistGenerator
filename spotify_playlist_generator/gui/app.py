@@ -5,6 +5,7 @@ from tkinter import filedialog, messagebox, ttk
 import webbrowser
 from pathlib import Path
 
+from .. import __version__
 from ..auth import has_cached_token, reset_token
 from ..config import Config, DEFAULT_REDIRECT_URI, DEFAULT_TOKEN_PATH, load_config
 from ..errors import PlaylistGeneratorError
@@ -17,6 +18,7 @@ from .worker import GenerationWorker
 
 APP_TITLE = "Spotify Playlist Generator"
 SUBTITLE = "CSV rein, Playlist raus."
+DEVELOPER = "Dennis Krüger"
 DASHBOARD_URL = "https://developer.spotify.com/dashboard"
 
 
@@ -28,7 +30,7 @@ class App:
         self.settings_path = settings_path
         self.style = theme.apply_theme(root)
 
-        root.title(APP_TITLE)
+        root.title(f"{APP_TITLE} — v{__version__}")
         root.geometry("1020x820")
         root.minsize(880, 640)
 
@@ -75,8 +77,13 @@ class App:
         titlerow.pack(anchor="w")
         ttk.Label(titlerow, text="●", style="H1.TLabel", foreground=theme.ACCENT).pack(side="left")
         ttk.Label(titlerow, text=APP_TITLE, style="H1.TLabel").pack(side="left", padx=(10, 0))
+        ttk.Label(
+            titlerow, text=f"v{__version__}", style="Muted.TLabel"
+        ).pack(side="left", padx=(10, 0), pady=(6, 0))
 
-        ttk.Label(header, text=SUBTITLE, style="Muted.TLabel").pack(anchor="w", pady=(2, 0))
+        ttk.Label(
+            header, text=f"{SUBTITLE}  ·  Entwickler: {DEVELOPER}", style="Muted.TLabel"
+        ).pack(anchor="w", pady=(2, 0))
 
         self.notebook = ttk.Notebook(outer)
         self.notebook.pack(fill="both", expand=True, padx=16, pady=(8, 16))
@@ -306,6 +313,14 @@ class App:
 
         self.settings_status_label = ttk.Label(body, text="", style="CardMuted.TLabel")
         self.settings_status_label.pack(anchor="w", pady=(12, 0))
+
+        _, body = self._card(tab, "Über")
+        ttk.Label(
+            body, text=f"Version {__version__}", style="Card.TLabel"
+        ).pack(anchor="w")
+        ttk.Label(
+            body, text=f"Entwickler: {DEVELOPER}", style="CardMuted.TLabel"
+        ).pack(anchor="w", pady=(4, 0))
 
     def _log(self, text):
         self.log_text.configure(state="normal")
