@@ -16,6 +16,8 @@ import requests
 from .config import AUTH_URL, SCOPES, TOKEN_URL, Config
 from .errors import AuthError
 
+DEFAULT_LOGIN_TIMEOUT = 180
+
 
 def _generate_code_verifier() -> str:
     """
@@ -157,21 +159,47 @@ def save_token(path: Path, token: Token) -> None:
     os.chmod(path, 0o600)
 
 
+def has_cached_token(path: Path) -> bool:
+    """Prüft, ob ein brauchbarer Token im Cache liegt (ohne ihn zu erneuern)."""
+    token = load_token(path)
+    if token is None:
+        return False
+
+    if not token.is_expired():
+        return True
+
+    if token.refresh_token:
+        return True
+
+    return False
+
+
+def reset_token(path: Path) -> None:
+    """Löscht den zwischengespeicherten Token, damit sich der Nutzer neu anmelden kann."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 class SpotifyAuth:
     """
     Handles OAuth2 authentication with Spotify using PKCE flow.
     """
 
-    def __init__(self, config: Config, session: Optional[requests.Session] = None):
+    def __init__(self, config: Config, session: Optional[requests.Session] = None,
+                 login_timeout: int = DEFAULT_LOGIN_TIMEOUT):
         """
         Initialize SpotifyAuth.
 
         Args:
             config: Config object with client_id, redirect_uri, token_path
             session: Optional requests.Session object (for testing or reuse)
+            login_timeout: Timeout in Sekunden, wie lange auf den Browser-Rückruf gewartet wird
         """
         self.config = config
         self.session = session or requests.Session()
+        self.login_timeout = login_timeout
 
     def _exchange_code(self, code: str, verifier: str) -> Token:
         """
@@ -194,6 +222,9 @@ class SpotifyAuth:
             "redirect_uri": self.config.redirect_uri,
             "code_verifier": verifier,
         }
+
+        if self.config.client_secret:
+            payload["client_secret"] = self.config.client_secret
 
         try:
             response = self.session.post(TOKEN_URL, data=payload)
@@ -240,6 +271,9 @@ class SpotifyAuth:
             "client_id": self.config.client_id,
             "refresh_token": token.refresh_token,
         }
+
+        if self.config.client_secret:
+            payload["client_secret"] = self.config.client_secret
 
         try:
             response = self.session.post(TOKEN_URL, data=payload)
@@ -329,6 +363,9 @@ class SpotifyAuth:
         server.callback_code = None
         server.callback_error = None
         server.callback_state = None
+        server.timeout = self.login_timeout
+        server.timed_out = False
+        server.handle_timeout = lambda: setattr(server, "timed_out", True)
 
         print(f"Warte auf Rückruf auf {host}:{port}...")
 
@@ -337,6 +374,12 @@ class SpotifyAuth:
             server.handle_request()
         finally:
             server.server_close()
+
+        if server.timed_out:
+            raise AuthError(
+                f"Zeitüberschreitung: Innerhalb von {self.login_timeout} Sekunden "
+                "kam keine Antwort von Spotify zurück. Bitte erneut versuchen."
+            )
 
         # Check for error in callback
         if server.callback_error:
