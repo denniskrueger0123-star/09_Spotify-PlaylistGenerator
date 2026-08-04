@@ -6,12 +6,14 @@ import webbrowser
 from pathlib import Path
 
 from ..auth import has_cached_token, reset_token
-from ..config import DEFAULT_REDIRECT_URI, DEFAULT_TOKEN_PATH
+from ..config import Config, DEFAULT_REDIRECT_URI, DEFAULT_TOKEN_PATH, load_config
+from ..errors import PlaylistGeneratorError
 from ..matcher import DEFAULT_MIN_SCORE
 from ..report import write_report
 from ..settings import load_settings, save_settings
 from . import theme
 from . import viewmodel as vm
+from .worker import GenerationWorker
 
 APP_TITLE = "Spotify Playlist Generator"
 SUBTITLE = "CSV rein, Playlist raus."
@@ -46,6 +48,9 @@ class App:
         self.client_secret_var = tk.StringVar()
         self.redirect_var = tk.StringVar()
         self.token_path_var = tk.StringVar()
+
+        self.worker = GenerationWorker()
+        self._poll_job = None
 
         self._build()
         self._load_settings_into_form()
@@ -418,11 +423,135 @@ class App:
         self.settings_status_label.configure(text="Anmeldung zurückgesetzt.", style="Ok.TLabel")
         self._refresh_login_status()
 
+    def _current_config(self):
+        """
+        Baut die Konfiguration für einen Lauf.
+
+        Ausgefüllte Felder im Einstellungen-Reiter haben Vorrang; ist dort keine
+        Client-ID hinterlegt, greift die übliche Ladereihenfolge aus Umgebung,
+        settings.json und .env.
+        """
+        client_id = self.client_id_var.get().strip()
+        if client_id:
+            return Config(
+                client_id=client_id,
+                redirect_uri=self.redirect_var.get().strip() or DEFAULT_REDIRECT_URI,
+                token_path=Path(self.token_path_var.get().strip() or str(DEFAULT_TOKEN_PATH)),
+                client_secret=self.client_secret_var.get().strip(),
+            )
+        return load_config(settings_path=self.settings_path)
+
     def _on_run(self):
-        """Wird in Schritt 8 mit dem Suchlauf verbunden."""
+        """Startet den Suchlauf im Hintergrund."""
+        if self.worker.is_running():
+            return
+
+        errors = vm.validate(self.csv_var.get(), self.name_var.get())
+        if errors:
+            messagebox.showwarning("Eingaben unvollständig", "\n".join(errors))
+            return
+
+        try:
+            config = self._current_config()
+        except PlaylistGeneratorError as exc:
+            messagebox.showerror("Keine Zugangsdaten", str(exc))
+            self.notebook.select(self.notebook.tabs()[2])
+            return
+
+        params = vm.build_params(
+            self.csv_var.get(), self.name_var.get(),
+            description=self.desc_var.get(), public=self.public_var.get(),
+            market=self.market_var.get(), min_score=self.min_score_var.get(),
+            limit=self.limit_var.get(), dry_run=self.dry_run_var.get(),
+        )
+
+        self._reset_run_state()
+        self.worker.start(config, params)
+        self._poll_worker()
+
+    def _reset_run_state(self):
+        """Setzt Tabelle, Kennzahlen, Protokoll und Buttons für einen neuen Lauf zurück."""
+        self.result = None
+        self.row_urls.clear()
+        self.tree.delete(*self.tree.get_children(""))
+        for value in self.chip_values.values():
+            value.configure(text="0")
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+        self.progress.configure(value=0, maximum=100)
+        self.run_button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
+        self.save_report_button.configure(state="disabled")
+        self.open_playlist_button.configure(state="disabled")
+        self._set_status("Wird gestartet …")
+
+    def _poll_worker(self):
+        """Holt Meldungen des Hintergrund-Threads und plant den nächsten Abruf."""
+        for kind, payload in self.worker.poll():
+            if kind == "progress":
+                self._handle_progress(payload)
+            elif kind == "result":
+                self._handle_result(payload)
+            elif kind == "error":
+                self._handle_error(payload)
+        if self.worker.is_running():
+            self._poll_job = self.root.after(80, self._poll_worker)
+        else:
+            self._poll_job = None
+
+    def _handle_progress(self, event):
+        if event.kind == "auth":
+            self._set_status("Anmeldung bei Spotify … bitte das Browserfenster beachten.")
+        elif event.kind == "start":
+            self.progress.configure(maximum=max(event.total, 1), value=0)
+            self._set_status(f"Suche läuft … ({event.total} Song(s))")
+        elif event.kind == "song":
+            self.progress.configure(value=event.index)
+            self._set_status(event.message)
+            self._log(event.message)
+            if event.row is not None:
+                self._append_result_row(event.row)
+        elif event.kind == "info":
+            self._log(event.message)
+        elif event.kind == "done":
+            pass
+
+    def _append_result_row(self, row):
+        item = self.tree.insert("", "end", values=vm.result_row_values(row), tags=(row.status,))
+        if row.spotify_url:
+            self.row_urls[item] = row.spotify_url
+
+    def _handle_result(self, result):
+        self.result = result
+        for key, value in result.counts.items():
+            self.chip_values[key].configure(text=str(value))
+        self.run_button.configure(state="normal")
+        self.cancel_button.configure(state="disabled")
+        if result.rows:
+            self.save_report_button.configure(state="normal")
+        if result.playlist_url:
+            self.open_playlist_button.configure(state="normal")
+            self._log(f"Playlist erstellt: {result.playlist_url}")
+        if result.cancelled:
+            self._set_status("Abgebrochen.")
+        else:
+            self._set_status(vm.summary_line(result.rows))
+        if result.rows:
+            self.notebook.select(self.notebook.tabs()[1])
+
+    def _handle_error(self, message):
+        self.run_button.configure(state="normal")
+        self.cancel_button.configure(state="disabled")
+        self._set_status("Abgebrochen wegen eines Fehlers.")
+        self._log(message)
+        messagebox.showerror("Fehler", message)
 
     def _on_cancel(self):
-        """Wird in Schritt 8 mit dem Suchlauf verbunden."""
+        """Fordert den Abbruch des laufenden Vorgangs an."""
+        self.worker.cancel()
+        self.cancel_button.configure(state="disabled")
+        self._set_status("Abbruch angefordert – der aktuelle Song wird noch beendet …")
 
 
 def main() -> int:
