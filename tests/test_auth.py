@@ -9,6 +9,9 @@ import requests
 
 from spotify_playlist_generator import auth as auth_module
 from spotify_playlist_generator.auth import (
+    CHECK_INVALID,
+    CHECK_OK,
+    CHECK_UNKNOWN,
     AuthError,
     SpotifyAuth,
     Token,
@@ -254,35 +257,35 @@ def test_check_credentials_empty_client_id_fails():
 
     outcome = check_credentials(config, session=session)
 
-    assert outcome.ok is False
+    assert outcome.status == CHECK_INVALID
     assert session.calls == []
 
 
 def test_check_credentials_accepts_redirect_to_login():
-    """A redirect without an error means Spotify accepted the client ID."""
-    session = _CheckSession(_CheckResponse(302, "https://accounts.spotify.com/login?..."))
+    """A redirect without an error parameter means Spotify accepted the client ID."""
+    session = _CheckSession(_CheckResponse(302, "https://accounts.spotify.com/login?continue=x"))
 
     outcome = check_credentials(_make_config(), session=session)
 
-    assert outcome.ok is True
+    assert outcome.status == CHECK_OK
 
 
 def test_check_credentials_detects_invalid_client_id():
-    """An error redirect means the client ID is not accepted."""
-    session = _CheckSession(_CheckResponse(302, "https://accounts.spotify.com/error?error=invalid_client"))
+    """An OAuth error parameter means the client ID is not accepted."""
+    session = _CheckSession(_CheckResponse(302, "https://example.com/cb?error=invalid_client"))
 
     outcome = check_credentials(_make_config(), session=session)
 
-    assert outcome.ok is False
+    assert outcome.status == CHECK_INVALID
 
 
 def test_check_credentials_detects_redirect_uri_mismatch():
     """A redirect_uri error is reported with a specific message."""
-    session = _CheckSession(_CheckResponse(400, "https://accounts.spotify.com/error?error=invalid_redirect_uri"))
+    session = _CheckSession(_CheckResponse(302, "https://example.com/cb?error=invalid_redirect_uri"))
 
     outcome = check_credentials(_make_config(), session=session)
 
-    assert outcome.ok is False
+    assert outcome.status == CHECK_INVALID
     assert "Redirect URI" in outcome.message
 
 
@@ -292,7 +295,7 @@ def test_check_credentials_handles_no_network():
 
     outcome = check_credentials(_make_config(), session=session)
 
-    assert outcome.ok is False
+    assert outcome.status == CHECK_UNKNOWN
     assert "Verbindung" in outcome.message
 
 
@@ -303,3 +306,35 @@ def test_check_credentials_sends_timeout():
     check_credentials(_make_config(), session=session)
 
     assert session.calls[0]["kwargs"]["timeout"] is not None
+
+
+def test_check_credentials_unexpected_200_is_not_a_pass():
+    """A 200 (e.g. an HTML error page) must NOT be reported as a valid client ID."""
+    session = _CheckSession(_CheckResponse(200, ""))
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.status == CHECK_UNKNOWN
+    assert outcome.ok is False
+
+
+def test_check_credentials_ignores_error_substring_elsewhere_in_url():
+    """The word 'error' outside the OAuth error parameter must not fail the check."""
+    session = _CheckSession(
+        _CheckResponse(302, "https://accounts.spotify.com/login?continue=https%3A%2F%2Ferror_page")
+    )
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.status == CHECK_OK
+
+
+def test_check_credentials_sends_pkce_params_like_the_real_login():
+    """The check mirrors the real login request so its verdict is meaningful."""
+    session = _CheckSession(_CheckResponse(302, "https://accounts.spotify.com/login?continue=x"))
+
+    check_credentials(_make_config(), session=session)
+
+    params = session.calls[0]["params"]
+    assert params["code_challenge_method"] == "S256"
+    assert params["code_challenge"]

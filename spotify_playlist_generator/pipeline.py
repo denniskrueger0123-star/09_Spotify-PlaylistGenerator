@@ -244,9 +244,12 @@ def run_generation(
                 if not playlist_id:
                     raise SpotifyApiError("Playlist konnte nicht erstellt werden")
 
-                client.add_tracks(playlist_id, uris_ordered)
+                # Vor dem Hochladen merken: Die Playlist existiert ab jetzt im Account,
+                # auch wenn add_tracks abgebrochen wird. Sonst fände der Nutzer sie nicht wieder.
                 result.playlist_id = playlist_id
                 result.playlist_url = (playlist.get("external_urls") or {}).get("spotify", "")
+
+                client.add_tracks(playlist_id, uris_ordered)
                 if result.playlist_url:
                     emit(ProgressEvent(kind="info", message=f"Playlist erstellt: {result.playlist_url}"))
             else:

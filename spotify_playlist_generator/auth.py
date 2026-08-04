@@ -183,30 +183,48 @@ def reset_token(path: Path) -> None:
         pass
 
 
+CHECK_OK = "ok"
+CHECK_INVALID = "invalid"
+CHECK_UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class CredentialCheck:
-    """Ergebnis einer Vorabprüfung der Zugangsdaten."""
-    ok: bool
+    """
+    Ergebnis einer Vorabprüfung der Zugangsdaten.
+
+    status ist bewusst dreiwertig: Nur ein eindeutiges Signal von Spotify führt zu
+    CHECK_OK oder CHECK_INVALID. Alles Unerwartete bleibt CHECK_UNKNOWN, damit die
+    Prüfung nie fälschlich Entwarnung gibt.
+    """
+    status: str
     message: str
+
+    @property
+    def ok(self) -> bool:
+        return self.status == CHECK_OK
 
 
 def check_credentials(config: Config, session: Optional[requests.Session] = None) -> CredentialCheck:
     """
     Prüft Client ID und Redirect URI, ohne einen vollständigen Login auszulösen.
 
-    Ruft die Autorisierungsseite auf, ohne der Weiterleitung zu folgen: Spotify
-    antwortet mit einer Weiterleitung zum Login, wenn die Angaben stimmen, und
-    mit einer Fehlerseite, wenn Client ID oder Redirect URI nicht passen.
+    Stellt dieselbe Anfrage wie der echte Login (inklusive PKCE-Parameter), folgt der
+    Weiterleitung aber nicht. Bewertet wird ausschließlich der OAuth-Parameter `error`
+    in der Rückleitung; jede andere Antwort gilt als "nicht eindeutig prüfbar".
     """
     if not config.client_id.strip():
-        return CredentialCheck(False, "Keine Client ID eingetragen.")
+        return CredentialCheck(CHECK_INVALID, "Keine Client ID eingetragen.")
 
     session = session or requests.Session()
+    verifier = _generate_code_verifier()
     params = {
         "client_id": config.client_id,
         "response_type": "code",
         "redirect_uri": config.redirect_uri,
         "scope": SCOPES,
+        "code_challenge": _code_challenge(verifier),
+        "code_challenge_method": "S256",
     }
 
     try:
@@ -214,25 +232,37 @@ def check_credentials(config: Config, session: Optional[requests.Session] = None
             AUTH_URL, params=params, allow_redirects=False, timeout=REQUEST_TIMEOUT
         )
     except requests.exceptions.Timeout:
-        return CredentialCheck(False, "Zeitüberschreitung – Spotify war nicht erreichbar.")
+        return CredentialCheck(CHECK_UNKNOWN, "Zeitüberschreitung – Spotify war nicht erreichbar.")
     except requests.RequestException as exc:
-        return CredentialCheck(False, f"Keine Verbindung zu Spotify: {exc}")
+        return CredentialCheck(CHECK_UNKNOWN, f"Keine Verbindung zu Spotify: {exc}")
 
     location = response.headers.get("Location", "")
+    error = ""
+    if location:
+        error = (parse_qs(urlparse(location).query).get("error", [""])[0] or "").strip()
 
-    if "error" in location.lower() or response.status_code >= 400:
-        if "redirect_uri" in location.lower():
+    if error:
+        if "redirect_uri" in error.lower():
             return CredentialCheck(
-                False,
+                CHECK_INVALID,
                 "Die Redirect URI passt nicht zu den Angaben im Spotify-Dashboard.",
             )
         return CredentialCheck(
-            False,
-            "Client ID oder Redirect URI wird von Spotify abgelehnt. "
-            "Bitte beides im Dashboard prüfen.",
+            CHECK_INVALID,
+            f"Spotify lehnt die Angaben ab ({error}). Client ID und Redirect URI im Dashboard prüfen.",
         )
 
-    return CredentialCheck(True, "Client ID und Redirect URI werden von Spotify akzeptiert.")
+    # Ohne Fehlerparameter gilt nur eine echte Weiterleitung als Bestätigung.
+    if response.status_code in (301, 302, 303, 307, 308) and location:
+        return CredentialCheck(
+            CHECK_OK, "Client ID und Redirect URI werden von Spotify akzeptiert."
+        )
+
+    return CredentialCheck(
+        CHECK_UNKNOWN,
+        f"Konnte nicht eindeutig geprüft werden (unerwartete Antwort {response.status_code}). "
+        "Das sagt nichts über die Gültigkeit der Client ID aus.",
+    )
 
 
 class SpotifyAuth:

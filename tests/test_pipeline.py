@@ -373,3 +373,27 @@ def test_counts_and_exit_code_properties():
 
     ok_result = GenerationResult(rows=[rows[0]])
     assert ok_result.exit_code == 0
+
+
+class _CancelOnAddClient(_StubClient):
+    """Client that creates the playlist fine but is cancelled during the track upload."""
+
+    def add_tracks(self, playlist_id, uris):
+        raise OperationCancelled("Abbruch während des Hochladens")
+
+
+def test_cancel_during_add_tracks_keeps_playlist_reference(tmp_path):
+    """A playlist created before an aborted upload stays reachable via id and url,
+    so the user can still find the (possibly incomplete) playlist in their account."""
+    csv_path = _write_csv(tmp_path, "title,artist\nSong One,Artist One\n")
+    client = _CancelOnAddClient(
+        search_results=[_track("Song One", "Artist One", "spotify:track:1")]
+    )
+
+    params = GenerationParams(csv_path=csv_path, playlist_name="My Playlist")
+    result = run_generation(_config(), params, client=client, auth=_StubAuth())
+
+    assert result.cancelled is True
+    assert client.created  # the playlist really was created on Spotify
+    assert result.playlist_id == "pl1"
+    assert result.playlist_url == "https://open.spotify.com/playlist/pl1"

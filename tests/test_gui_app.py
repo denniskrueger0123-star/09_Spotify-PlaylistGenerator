@@ -436,10 +436,17 @@ def test_run_without_csv_does_not_start_worker(app, fake_messagebox, monkeypatch
 
 # --- Client-ID-Prüfung ---
 
+from spotify_playlist_generator.auth import CHECK_INVALID, CHECK_OK, CHECK_UNKNOWN
+
+
 class _CheckOutcome:
-    def __init__(self, ok, message):
-        self.ok = ok
+    def __init__(self, status, message):
+        self.status = status
         self.message = message
+
+    @property
+    def ok(self):
+        return self.status == CHECK_OK
 
 
 def _run_check_synchronously(app, outcome):
@@ -456,7 +463,7 @@ def test_check_credentials_success_shows_ok(app):
     """A successful check shows the message in the OK style."""
     app.client_id_var.set("some-client-id")
 
-    _run_check_synchronously(app, _CheckOutcome(True, "Alles in Ordnung."))
+    _run_check_synchronously(app, _CheckOutcome(CHECK_OK, "Alles in Ordnung."))
 
     assert app.settings_status_label.cget("text") == "Alles in Ordnung."
     assert str(app.settings_status_label.cget("style")) == "Ok.TLabel"
@@ -467,7 +474,7 @@ def test_check_credentials_failure_shows_danger(app):
     """A failed check shows the message in the danger style."""
     app.client_id_var.set("bad-id")
 
-    _run_check_synchronously(app, _CheckOutcome(False, "Client ID abgelehnt."))
+    _run_check_synchronously(app, _CheckOutcome(CHECK_INVALID, "Client ID abgelehnt."))
 
     assert app.settings_status_label.cget("text") == "Client ID abgelehnt."
     assert str(app.settings_status_label.cget("style")) == "Danger.TLabel"
@@ -482,7 +489,7 @@ def test_check_credentials_uses_form_values(app):
 
     def checker(config):
         seen.append(config)
-        return _CheckOutcome(True, "ok")
+        return _CheckOutcome(CHECK_OK, "ok")
 
     app._on_check_credentials(checker=checker)
     deadline = time.time() + 3
@@ -493,3 +500,30 @@ def test_check_credentials_uses_form_values(app):
 
     assert seen[0].client_id == "form-client-id"
     assert seen[0].redirect_uri == "http://127.0.0.1:9999/callback"
+
+
+def test_check_credentials_unknown_shows_warning_not_ok(app):
+    """An inconclusive check is shown as a warning, never as a green all-clear."""
+    app.client_id_var.set("some-id")
+
+    _run_check_synchronously(app, _CheckOutcome(CHECK_UNKNOWN, "Nicht eindeutig prüfbar."))
+
+    assert app.settings_status_label.cget("text") == "Nicht eindeutig prüfbar."
+    assert str(app.settings_status_label.cget("style")) == "Warn.TLabel"
+
+
+def test_cancelled_run_with_playlist_mentions_it_in_status(app):
+    """When a cancelled run already created a playlist, the status says so and the link works."""
+    result = GenerationResult(
+        rows=[ResultRow(row=1, title="t", artist="a", status="found", reason="",
+                        matched_title="t", matched_artists="a",
+                        spotify_url="https://open.spotify.com/track/1", score=1.0)],
+        playlist_url="https://open.spotify.com/playlist/abc",
+        playlist_id="abc",
+        cancelled=True,
+    )
+
+    app._handle_result(result)
+
+    assert "angelegt" in app.status_label.cget("text")
+    assert str(app.open_playlist_button.cget("state")) == "normal"

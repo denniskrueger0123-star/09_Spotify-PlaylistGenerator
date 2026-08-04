@@ -9,7 +9,15 @@ import queue
 import threading
 
 from .. import __version__
-from ..auth import CredentialCheck, check_credentials, has_cached_token, reset_token
+from ..auth import (
+    CHECK_INVALID,
+    CHECK_OK,
+    CHECK_UNKNOWN,
+    CredentialCheck,
+    check_credentials,
+    has_cached_token,
+    reset_token,
+)
 from ..config import Config, DEFAULT_REDIRECT_URI, DEFAULT_TOKEN_PATH, load_config
 from ..errors import PlaylistGeneratorError
 from ..matcher import DEFAULT_MIN_SCORE
@@ -462,7 +470,7 @@ class App:
             try:
                 outcome = checker(config)
             except Exception as exc:
-                outcome = CredentialCheck(False, f"Prüfung fehlgeschlagen: {exc}")
+                outcome = CredentialCheck(CHECK_UNKNOWN, f"Prüfung fehlgeschlagen: {exc}")
             self._check_queue.put(outcome)
 
         threading.Thread(target=work, daemon=True).start()
@@ -477,8 +485,9 @@ class App:
             return
 
         self.check_button.configure(state="normal")
+        styles = {CHECK_OK: "Ok.TLabel", CHECK_INVALID: "Danger.TLabel", CHECK_UNKNOWN: "Warn.TLabel"}
         self.settings_status_label.configure(
-            text=outcome.message, style="Ok.TLabel" if outcome.ok else "Danger.TLabel"
+            text=outcome.message, style=styles.get(outcome.status, "Warn.TLabel")
         )
 
     def _current_config(self):
@@ -592,7 +601,13 @@ class App:
             self.open_playlist_button.configure(state="normal")
             self._log(f"Playlist erstellt: {result.playlist_url}")
         if result.cancelled:
-            self._set_status("Abgebrochen.")
+            if result.playlist_url:
+                self._set_status(
+                    "Abgebrochen – die Playlist wurde bereits angelegt und ist "
+                    "möglicherweise unvollständig."
+                )
+            else:
+                self._set_status("Abgebrochen.")
         else:
             self._set_status(vm.summary_line(result.rows))
         if result.rows:
