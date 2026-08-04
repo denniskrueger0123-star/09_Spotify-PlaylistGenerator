@@ -17,6 +17,7 @@ from .config import AUTH_URL, SCOPES, TOKEN_URL, Config
 from .errors import AuthError
 
 DEFAULT_LOGIN_TIMEOUT = 180
+REQUEST_TIMEOUT = (10, 30)  # (connect, read) Sekunden
 
 
 def _generate_code_verifier() -> str:
@@ -227,7 +228,7 @@ class SpotifyAuth:
             payload["client_secret"] = self.config.client_secret
 
         try:
-            response = self.session.post(TOKEN_URL, data=payload)
+            response = self.session.post(TOKEN_URL, data=payload, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
         except requests.RequestException as e:
             raise AuthError(
@@ -276,7 +277,7 @@ class SpotifyAuth:
             payload["client_secret"] = self.config.client_secret
 
         try:
-            response = self.session.post(TOKEN_URL, data=payload)
+            response = self.session.post(TOKEN_URL, data=payload, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as e:
             raise AuthError(
                 f"Token-Aktualisierung fehlgeschlagen: {e}"

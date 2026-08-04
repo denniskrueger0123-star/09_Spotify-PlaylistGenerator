@@ -5,6 +5,8 @@ import requests
 from .config import API_BASE
 from .errors import RateLimitError, SpotifyApiError
 
+REQUEST_TIMEOUT = (10, 30)  # (connect, read) Sekunden
+
 
 class SpotifyClient:
     """Client for Spotify Web API with automatic retry logic."""
@@ -44,6 +46,7 @@ class SpotifyClient:
         url = API_BASE + path
         attempt = 0
         retry_count = 0
+        kwargs.setdefault("timeout", REQUEST_TIMEOUT)
 
         while True:
             # Get fresh token for each attempt
@@ -52,7 +55,15 @@ class SpotifyClient:
             headers["Authorization"] = f"Bearer {token}"
             kwargs["headers"] = headers
 
-            response = self._session.request(method, url, **kwargs)
+            try:
+                response = self._session.request(method, url, **kwargs)
+            except requests.exceptions.Timeout:
+                raise SpotifyApiError(
+                    "Zeitüberschreitung: Spotify hat nicht rechtzeitig geantwortet. "
+                    "Prüfe deine Internetverbindung und versuche es erneut."
+                )
+            except requests.exceptions.RequestException as exc:
+                raise SpotifyApiError(f"Netzwerkfehler bei der Verbindung zu Spotify: {exc}")
 
             # Success
             if response.status_code < 400:

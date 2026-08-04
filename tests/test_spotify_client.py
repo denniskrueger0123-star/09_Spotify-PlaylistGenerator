@@ -3,6 +3,7 @@
 import json
 
 import pytest
+import requests
 
 from spotify_playlist_generator.errors import RateLimitError, SpotifyApiError
 from spotify_playlist_generator.spotify_client import SpotifyClient
@@ -444,3 +445,43 @@ def test_search_with_market_parameter():
     params = session.calls[0]["kwargs"].get("params", {})
     assert params["market"] == "DE"
     assert params["limit"] == 20
+
+
+def test_request_has_default_timeout():
+    """Every request carries a timeout so a hanging connection can't block forever."""
+    session = FakeSession([FakeResponse(200, {"tracks": {"items": []}})])
+    client = SpotifyClient(lambda: "token", session=session, sleep=dummy_sleep)
+
+    client.search_track("query")
+
+    assert session.calls[0]["kwargs"]["timeout"] is not None
+
+
+class HangingSession:
+    """Session whose request() simulates a network timeout."""
+
+    def request(self, method, url, **kwargs):
+        raise requests.exceptions.Timeout("Connection timed out")
+
+
+def test_timeout_raises_spotify_api_error_instead_of_hanging():
+    """A network timeout is converted into a catchable SpotifyApiError, not an unhandled hang."""
+    client = SpotifyClient(lambda: "token", session=HangingSession(), sleep=dummy_sleep)
+
+    with pytest.raises(SpotifyApiError):
+        client.search_track("query")
+
+
+class UnreachableSession:
+    """Session whose request() simulates a general connection failure."""
+
+    def request(self, method, url, **kwargs):
+        raise requests.exceptions.ConnectionError("Name or service not known")
+
+
+def test_connection_error_raises_spotify_api_error():
+    """A DNS/connection failure is converted into a catchable SpotifyApiError."""
+    client = SpotifyClient(lambda: "token", session=UnreachableSession(), sleep=dummy_sleep)
+
+    with pytest.raises(SpotifyApiError):
+        client.search_track("query")

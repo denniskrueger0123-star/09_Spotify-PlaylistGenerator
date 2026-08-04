@@ -44,7 +44,7 @@ class _StubSession:
 
     def post(self, url, data=None, **kwargs):
         """Record the call and return the stubbed response."""
-        self.posts.append({"url": url, "data": data})
+        self.posts.append({"url": url, "data": data, "kwargs": kwargs})
         return _StubResponse(self._payload, self._status_code)
 
 
@@ -72,6 +72,29 @@ def test_exchange_code_includes_secret_when_set():
     sa._exchange_code("code", "verifier")
 
     assert session.posts[0]["data"]["client_secret"] == "geheim"
+
+
+def test_exchange_code_sets_request_timeout():
+    """_exchange_code passes a timeout so a hanging token endpoint can't block forever."""
+    config = _make_config()
+    session = _StubSession(_TOKEN_PAYLOAD)
+    sa = SpotifyAuth(config, session=session)
+
+    sa._exchange_code("code", "verifier")
+
+    assert session.posts[0]["kwargs"]["timeout"] is not None
+
+
+def test_refresh_sets_request_timeout():
+    """_refresh passes a timeout so a hanging token endpoint can't block forever."""
+    config = _make_config()
+    session = _StubSession(_TOKEN_PAYLOAD)
+    sa = SpotifyAuth(config, session=session)
+    token = Token(access_token="old", refresh_token="rt", expires_at=0.0)
+
+    sa._refresh(token)
+
+    assert session.posts[0]["kwargs"]["timeout"] is not None
 
 
 def test_exchange_code_omits_secret_when_empty():
