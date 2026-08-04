@@ -292,7 +292,7 @@ class SpotifyAuth:
     """
 
     def __init__(self, config: Config, session: Optional[requests.Session] = None,
-                 login_timeout: int = DEFAULT_LOGIN_TIMEOUT):
+                 login_timeout: int = DEFAULT_LOGIN_TIMEOUT, notify=None):
         """
         Initialize SpotifyAuth.
 
@@ -300,10 +300,20 @@ class SpotifyAuth:
             config: Config object with client_id, redirect_uri, token_path
             session: Optional requests.Session object (for testing or reuse)
             login_timeout: Timeout in Sekunden, wie lange auf den Browser-Rückruf gewartet wird
+            notify: Optionaler Callback, der Statustexte des Anmeldevorgangs erhält.
+                Ohne ihn landen die Texte nur auf der Konsole, die beim Start per
+                Doppelklick nicht sichtbar ist.
         """
         self.config = config
         self.session = session or requests.Session()
         self.login_timeout = login_timeout
+        self._notify = notify
+
+    def _say(self, text: str) -> None:
+        """Gibt einen Statustext auf der Konsole aus und meldet ihn, falls möglich, auch der Oberfläche."""
+        print(text)
+        if self._notify is not None:
+            self._notify(text)
 
     def _exchange_code(self, code: str, verifier: str) -> Token:
         """
@@ -452,7 +462,7 @@ class SpotifyAuth:
         )
 
         # Print URL to console (in case browser doesn't open)
-        print(f"\nÖffne diese URL im Browser:\n{auth_url}\n")
+        self._say(f"Öffne diese URL im Browser: {auth_url}")
 
         # Try to open browser
         webbrowser.open(auth_url)
@@ -471,7 +481,7 @@ class SpotifyAuth:
         server.timed_out = False
         server.handle_timeout = lambda: setattr(server, "timed_out", True)
 
-        print(f"Warte auf Rückruf auf {host}:{port}...")
+        self._say(f"Warte auf die Anmeldung im Browser (bis zu {self.login_timeout} Sekunden) …")
 
         try:
             # Handle exactly one request

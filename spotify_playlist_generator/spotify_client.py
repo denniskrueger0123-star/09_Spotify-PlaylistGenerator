@@ -52,7 +52,8 @@ class SpotifyClient:
     """Client for Spotify Web API with automatic retry logic."""
 
     def __init__(self, token_provider, session: requests.Session | None = None,
-                 max_retries: int = 5, sleep=time.sleep, cancel: threading.Event | None = None):
+                 max_retries: int = 5, sleep=time.sleep, cancel: threading.Event | None = None,
+                 notify=None):
         """
         Initialize SpotifyClient.
 
@@ -63,12 +64,20 @@ class SpotifyClient:
             sleep: Injected sleep function for testing.
             cancel: Optional Event that, when set, interrupts a retry wait immediately
                 instead of sleeping through the full backoff/Retry-After duration.
+            notify: Optionaler Callback für Statustexte, etwa während einer Wartezeit
+                nach einer Drosselung durch Spotify.
         """
         self._token_provider = token_provider
         self._session = session if session is not None else requests.Session()
         self._max_retries = max_retries
         self._sleep = sleep
         self._cancel = cancel
+        self._notify = notify
+
+    def _say(self, text: str) -> None:
+        """Meldet einen Statustext, sofern ein Empfänger gesetzt ist."""
+        if self._notify is not None:
+            self._notify(text)
 
     def _sleep_or_cancel(self, seconds: float) -> None:
         """Sleeps in <=1s steps, raising OperationCancelled as soon as cancel is set."""
@@ -143,6 +152,10 @@ class SpotifyClient:
                     sleep_seconds = int(retry_after)
                 except (ValueError, TypeError):
                     sleep_seconds = 1
+                self._say(
+                    f"Spotify drosselt die Anfragen. Warte {sleep_seconds} Sekunde(n) "
+                    f"und versuche es erneut (Versuch {retry_count + 1} von {self._max_retries})."
+                )
                 self._sleep_or_cancel(sleep_seconds)
                 retry_count += 1
                 continue
@@ -161,6 +174,10 @@ class SpotifyClient:
                         payload=payload
                     )
                 sleep_seconds = 2 ** attempt
+                self._say(
+                    f"Spotify antwortet gerade nicht (HTTP {response.status_code}). "
+                    f"Neuer Versuch in {sleep_seconds} Sekunde(n)."
+                )
                 self._sleep_or_cancel(sleep_seconds)
                 attempt += 1
                 continue

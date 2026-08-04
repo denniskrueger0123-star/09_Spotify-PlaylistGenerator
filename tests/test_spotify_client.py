@@ -591,3 +591,20 @@ def test_no_cancel_event_behaves_like_before():
     items = client.search_track("query")
 
     assert items == []
+
+
+def test_notify_reports_rate_limit_wait():
+    """Während einer Drosselung meldet der Client die Wartezeit, damit die
+    Oberfläche nicht wie abgestürzt aussieht."""
+    session = FakeSession([
+        FakeResponse(429, {}, headers={"Retry-After": "3"}),
+        FakeResponse(200, {"tracks": {"items": []}}),
+    ])
+    said = []
+    client = SpotifyClient(
+        lambda: "token", session=session, sleep=dummy_sleep, notify=said.append
+    )
+
+    client.search_track("query")
+
+    assert any("3 Sekunde" in text for text in said)

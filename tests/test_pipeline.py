@@ -35,17 +35,24 @@ class _StubClient:
     - a list where each entry (None or an Exception) applies to one call in order.
     """
 
-    def __init__(self, search_results=None, playlist=None, search_error=None):
+    def __init__(self, search_results=None, playlist=None, search_error=None, user=None, user_error=None):
         self._search_results = search_results if search_results is not None else []
         self._playlist = playlist if playlist is not None else {
             "id": "pl1",
             "external_urls": {"spotify": "https://open.spotify.com/playlist/pl1"},
         }
         self._search_error = search_error
+        self._user = user if user is not None else {"id": "user1"}
+        self._user_error = user_error
         self.searches = []
         self.created = []
         self.added = []
         self._call_count = 0
+
+    def current_user(self):
+        if self._user_error is not None:
+            raise self._user_error
+        return self._user
 
     def search_track(self, query, market=None, limit=10):
         self.searches.append({"query": query, "market": market, "limit": limit})
@@ -380,3 +387,33 @@ def test_cancel_during_add_tracks_keeps_playlist_reference(tmp_path):
     assert client.created  # the playlist really was created on Spotify
     assert result.playlist_id == "pl1"
     assert result.playlist_url == "https://open.spotify.com/playlist/pl1"
+
+
+def test_run_generation_preflight_failure_stops_before_searching(tmp_path):
+    """Scheitert die Vorabprüfung, wird kein einziger Song gesucht — das spart
+    dem Nutzer 100 Fehlerzeilen und schont das Kontingent."""
+    csv_path = _write_csv(tmp_path, "title,artist\nSong One,Artist One\n")
+    client = _StubClient(
+        search_results=[_track("Song One", "Artist One", "spotify:track:1")],
+        user_error=SpotifyApiError("Spotify verweigert den Zugriff (403)."),
+    )
+
+    params = GenerationParams(csv_path=csv_path, playlist_name="My Playlist")
+    with pytest.raises(SpotifyApiError, match="403"):
+        run_generation(_config(), params, client=client, auth=_StubAuth())
+
+    assert client.searches == []
+    assert client.created == []
+
+
+def test_run_generation_reports_preflight_as_info(tmp_path):
+    """Die Vorabprüfung meldet sich in der Oberfläche, damit die Wartezeit erklärt ist."""
+    csv_path = _write_csv(tmp_path, "title,artist\nSong One,Artist One\n")
+    client = _StubClient(search_results=[_track("Song One", "Artist One", "spotify:track:1")])
+    events = []
+
+    params = GenerationParams(csv_path=csv_path, playlist_name="My Playlist")
+    run_generation(_config(), params, client=client, auth=_StubAuth(), progress=events.append)
+
+    info_messages = [e.message for e in events if e.kind == "info"]
+    assert any("Prüfe den Zugang" in m for m in info_messages)
