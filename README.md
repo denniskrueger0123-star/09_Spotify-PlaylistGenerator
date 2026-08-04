@@ -1,6 +1,22 @@
 # Spotify Playlist Generator
 
-Ein Python-CLI-Tool, das eine CSV-Datei mit Songs einliest, die passenden Tracks über die Spotify Web API sucht und daraus eine neue Spotify-Playlist im Account des angemeldeten Nutzers erstellt.
+Ein Python-Programm, das eine CSV-Datei mit Songs einliest, die passenden Tracks über die Spotify Web API sucht und daraus eine neue Spotify-Playlist im Account des angemeldeten Nutzers erstellt.
+
+Das Tool lässt sich auf zwei Wegen benutzen: über die **grafische Oberfläche** (empfohlen) oder über die **Kommandozeile**.
+
+## Schnellstart (grafische Oberfläche)
+
+- Unter Windows: Doppelklick auf `Spotify-Playlist-Generator.bat`. Der Starter prüft die Python-Installation, richtet beim ersten Mal automatisch eine eigene Arbeitsumgebung ein, installiert die benötigten Pakete und öffnet dann das Fenster. Ab dem zweiten Start geht es sofort los.
+- Unter Linux/macOS: `./run_gui.sh`
+- Beim allerersten Start: In den Reiter **Einstellungen** wechseln, die eigene **Client ID** eintragen (siehe Abschnitt „Setup"), auf **Einstellungen speichern** klicken.
+- Danach im Reiter **Playlist erstellen**: CSV-Datei auswählen, Namen vergeben, auf **Playlist erstellen** klicken. Beim ersten Lauf öffnet sich der Browser zur Anmeldung bei Spotify.
+- Die Einstellungen liegen unter `~/.spotify_playlist_generator/settings.json` (unter Windows `C:\Users\<Name>\.spotify_playlist_generator\settings.json`) und nicht im Projektordner — wer das Programm weitergibt, gibt damit keine Zugangsdaten mit.
+
+## Die Oberfläche im Überblick
+
+- **Playlist erstellen** — CSV auswählen (mit sofortiger Rückmeldung, wie viele Songs erkannt wurden), Name und Beschreibung, die Schalter „Öffentlich sichtbar" und „Trockenlauf", aufklappbare erweiterte Einstellungen (Markt, Mindest-Score, Treffer pro Suche), Fortschrittsbalken und Live-Protokoll. Der Lauf lässt sich jederzeit abbrechen.
+- **Ergebnis** — Kennzahlen und eine farbige Tabelle (grün gefunden, orange nicht gefunden, rot Fehler). Spalten sind per Klick auf die Überschrift sortierbar, ein Doppelklick öffnet den Song in Spotify. Der Report lässt sich als CSV speichern.
+- **Einstellungen** — Client ID, optionales Client Secret, Redirect URI und der Pfad der Token-Datei. Dazu „Anmeldung zurücksetzen", falls du den gespeicherten Zugang löschen willst.
 
 ## Voraussetzungen
 
@@ -20,7 +36,11 @@ Ein Python-CLI-Tool, das eine CSV-Datei mit Songs einliest, die passenden Tracks
 
 **Wichtig:** Du benötigst nur die Client-ID. Das Tool nutzt den PKCE-Flow (Proof Key for Code Exchange), daher ist kein Client-Secret nötig.
 
+In der Oberfläche gibt es zusätzlich ein Feld für ein Client Secret. Das ist optional und für den PKCE-Flow nicht nötig — lass es leer, wenn deine Spotify-App keins verlangt.
+
 ### 2. Umgebungsvariablen konfigurieren
+
+> Wer die grafische Oberfläche nutzt, braucht diesen Schritt nicht — dort wird die Client-ID im Reiter „Einstellungen" eingetragen. Die folgenden Schritte gelten für die Kommandozeile.
 
 Kopiere die `.env.example` zu `.env` und trage deine Client-ID ein:
 
@@ -65,7 +85,7 @@ Deutsch: `Interpret`, `Künstler`, `Kuenstler` oder Englisch: `Artist`, `Band`, 
 - Die Interpret-Spalte ist optional. Fehlt sie, sucht das Tool nur nach dem Titel
 - Zeilen mit leerem Titel werden übersprungen
 
-## Verwendung
+## Verwendung über die Kommandozeile
 
 ### Normale Ausführung
 
@@ -160,3 +180,5 @@ Führe alle Tests offline aus:
 ```bash
 python3 -m pytest tests/ -q
 ```
+
+Die Tests der Oberfläche brauchen `tkinter` und eine Anzeige. Fehlt beides, werden sie automatisch übersprungen, der Rest läuft normal durch.

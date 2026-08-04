@@ -176,7 +176,7 @@ class App:
         self.log_text = tk.Text(tab, height=5, relief="flat", borderwidth=0,
                                  background=theme.SURFACE, foreground=theme.TEXT_MUTED,
                                  insertbackground=theme.TEXT, font=theme.fonts()["mono"],
-                                 state="disabled", wrap="none")
+                                 state="disabled", wrap="none", highlightthickness=0)
         self.log_text.pack(side="bottom", fill="both", expand=True, pady=(12, 12))
 
     def _build_result_tab(self):
