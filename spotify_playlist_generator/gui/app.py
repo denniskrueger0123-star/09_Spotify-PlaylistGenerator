@@ -5,8 +5,11 @@ from tkinter import filedialog, messagebox, ttk
 import webbrowser
 from pathlib import Path
 
+import queue
+import threading
+
 from .. import __version__
-from ..auth import has_cached_token, reset_token
+from ..auth import CredentialCheck, check_credentials, has_cached_token, reset_token
 from ..config import Config, DEFAULT_REDIRECT_URI, DEFAULT_TOKEN_PATH, load_config
 from ..errors import PlaylistGeneratorError
 from ..matcher import DEFAULT_MIN_SCORE
@@ -53,6 +56,7 @@ class App:
 
         self.worker = GenerationWorker()
         self._poll_job = None
+        self._check_queue = queue.Queue()
 
         self._build()
         self._load_settings_into_form()
@@ -304,6 +308,10 @@ class App:
             style="Accent.TButton",
             command=self._on_save_settings,
         ).pack(side="left")
+        self.check_button = ttk.Button(
+            button_row, text="Client ID prüfen", command=self._on_check_credentials
+        )
+        self.check_button.pack(side="left", padx=(10, 0))
         ttk.Button(
             button_row, text="Anmeldung zurücksetzen", command=self._on_reset_login
         ).pack(side="left", padx=(10, 0))
@@ -437,6 +445,41 @@ class App:
         reset_token(Path(self.token_path_var.get()))
         self.settings_status_label.configure(text="Anmeldung zurückgesetzt.", style="Ok.TLabel")
         self._refresh_login_status()
+
+    def _on_check_credentials(self, checker=check_credentials):
+        """Prüft die Zugangsdaten im Hintergrund, damit das Fenster bedienbar bleibt."""
+        self.check_button.configure(state="disabled")
+        self.settings_status_label.configure(text="Prüfe Client ID …", style="CardMuted.TLabel")
+
+        config = Config(
+            client_id=self.client_id_var.get().strip(),
+            redirect_uri=self.redirect_var.get().strip() or DEFAULT_REDIRECT_URI,
+            token_path=Path(self.token_path_var.get().strip() or str(DEFAULT_TOKEN_PATH)),
+            client_secret=self.client_secret_var.get().strip(),
+        )
+
+        def work():
+            try:
+                outcome = checker(config)
+            except Exception as exc:
+                outcome = CredentialCheck(False, f"Prüfung fehlgeschlagen: {exc}")
+            self._check_queue.put(outcome)
+
+        threading.Thread(target=work, daemon=True).start()
+        self._poll_credential_check()
+
+    def _poll_credential_check(self):
+        """Holt das Prüfergebnis im Hauptthread ab — tkinter ist nicht thread-sicher."""
+        try:
+            outcome = self._check_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(50, self._poll_credential_check)
+            return
+
+        self.check_button.configure(state="normal")
+        self.settings_status_label.configure(
+            text=outcome.message, style="Ok.TLabel" if outcome.ok else "Danger.TLabel"
+        )
 
     def _current_config(self):
         """

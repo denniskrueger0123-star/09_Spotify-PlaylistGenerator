@@ -30,3 +30,8 @@ class SpotifyApiError(PlaylistGeneratorError):
 class RateLimitError(SpotifyApiError):
     """Raised when Spotify API rate limit is exceeded."""
     pass
+
+
+class OperationCancelled(PlaylistGeneratorError):
+    """Raised when a running operation is aborted via the cancel event, e.g. mid-retry-wait."""
+    pass

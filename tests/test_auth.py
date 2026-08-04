@@ -5,11 +5,14 @@ from pathlib import Path
 
 import pytest
 
+import requests
+
 from spotify_playlist_generator import auth as auth_module
 from spotify_playlist_generator.auth import (
     AuthError,
     SpotifyAuth,
     Token,
+    check_credentials,
     has_cached_token,
     reset_token,
     save_token,
@@ -215,3 +218,88 @@ def test_run_login_flow_raises_on_timeout(monkeypatch, tmp_path):
 
     with pytest.raises(AuthError, match="Zeitüberschreitung"):
         sa._run_login_flow()
+
+
+# --- check_credentials ---
+
+class _CheckResponse:
+    """Fake response for the authorize endpoint check."""
+
+    def __init__(self, status_code=302, location=""):
+        self.status_code = status_code
+        self.headers = {"Location": location} if location else {}
+
+
+class _CheckSession:
+    """Session whose get() returns a fixed response and records the call."""
+
+    def __init__(self, response=None, error=None):
+        self._response = response
+        self._error = error
+        self.calls = []
+
+    def get(self, url, params=None, **kwargs):
+        self.calls.append({"url": url, "params": params, "kwargs": kwargs})
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+
+def test_check_credentials_empty_client_id_fails():
+    """An empty client ID is rejected without any network call."""
+    config = _make_config()
+    config = Config(client_id="", redirect_uri=config.redirect_uri,
+                    token_path=config.token_path, client_secret="")
+    session = _CheckSession(_CheckResponse())
+
+    outcome = check_credentials(config, session=session)
+
+    assert outcome.ok is False
+    assert session.calls == []
+
+
+def test_check_credentials_accepts_redirect_to_login():
+    """A redirect without an error means Spotify accepted the client ID."""
+    session = _CheckSession(_CheckResponse(302, "https://accounts.spotify.com/login?..."))
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.ok is True
+
+
+def test_check_credentials_detects_invalid_client_id():
+    """An error redirect means the client ID is not accepted."""
+    session = _CheckSession(_CheckResponse(302, "https://accounts.spotify.com/error?error=invalid_client"))
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.ok is False
+
+
+def test_check_credentials_detects_redirect_uri_mismatch():
+    """A redirect_uri error is reported with a specific message."""
+    session = _CheckSession(_CheckResponse(400, "https://accounts.spotify.com/error?error=invalid_redirect_uri"))
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.ok is False
+    assert "Redirect URI" in outcome.message
+
+
+def test_check_credentials_handles_no_network():
+    """A connection failure is reported instead of raising."""
+    session = _CheckSession(error=requests.exceptions.ConnectionError("no route"))
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.ok is False
+    assert "Verbindung" in outcome.message
+
+
+def test_check_credentials_sends_timeout():
+    """The check passes a timeout so it cannot hang forever."""
+    session = _CheckSession(_CheckResponse(302, "https://accounts.spotify.com/login"))
+
+    check_credentials(_make_config(), session=session)
+
+    assert session.calls[0]["kwargs"]["timeout"] is not None

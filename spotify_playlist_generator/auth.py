@@ -183,6 +183,58 @@ def reset_token(path: Path) -> None:
         pass
 
 
+@dataclass(frozen=True)
+class CredentialCheck:
+    """Ergebnis einer Vorabprüfung der Zugangsdaten."""
+    ok: bool
+    message: str
+
+
+def check_credentials(config: Config, session: Optional[requests.Session] = None) -> CredentialCheck:
+    """
+    Prüft Client ID und Redirect URI, ohne einen vollständigen Login auszulösen.
+
+    Ruft die Autorisierungsseite auf, ohne der Weiterleitung zu folgen: Spotify
+    antwortet mit einer Weiterleitung zum Login, wenn die Angaben stimmen, und
+    mit einer Fehlerseite, wenn Client ID oder Redirect URI nicht passen.
+    """
+    if not config.client_id.strip():
+        return CredentialCheck(False, "Keine Client ID eingetragen.")
+
+    session = session or requests.Session()
+    params = {
+        "client_id": config.client_id,
+        "response_type": "code",
+        "redirect_uri": config.redirect_uri,
+        "scope": SCOPES,
+    }
+
+    try:
+        response = session.get(
+            AUTH_URL, params=params, allow_redirects=False, timeout=REQUEST_TIMEOUT
+        )
+    except requests.exceptions.Timeout:
+        return CredentialCheck(False, "Zeitüberschreitung – Spotify war nicht erreichbar.")
+    except requests.RequestException as exc:
+        return CredentialCheck(False, f"Keine Verbindung zu Spotify: {exc}")
+
+    location = response.headers.get("Location", "")
+
+    if "error" in location.lower() or response.status_code >= 400:
+        if "redirect_uri" in location.lower():
+            return CredentialCheck(
+                False,
+                "Die Redirect URI passt nicht zu den Angaben im Spotify-Dashboard.",
+            )
+        return CredentialCheck(
+            False,
+            "Client ID oder Redirect URI wird von Spotify abgelehnt. "
+            "Bitte beides im Dashboard prüfen.",
+        )
+
+    return CredentialCheck(True, "Client ID und Redirect URI werden von Spotify akzeptiert.")
+
+
 class SpotifyAuth:
     """
     Handles OAuth2 authentication with Spotify using PKCE flow.

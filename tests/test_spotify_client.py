@@ -1,11 +1,12 @@
 """Tests for spotify_client module."""
 
 import json
+import threading
 
 import pytest
 import requests
 
-from spotify_playlist_generator.errors import RateLimitError, SpotifyApiError
+from spotify_playlist_generator.errors import OperationCancelled, RateLimitError, SpotifyApiError
 from spotify_playlist_generator.spotify_client import SpotifyClient
 
 
@@ -485,3 +486,49 @@ def test_connection_error_raises_spotify_api_error():
 
     with pytest.raises(SpotifyApiError):
         client.search_track("query")
+
+
+def test_rate_limit_retry_wait_is_interrupted_by_cancel():
+    """Cancel set mid-retry-wait aborts immediately instead of sleeping through Retry-After."""
+    cancel = threading.Event()
+    sleep_calls = []
+
+    def tracking_sleep(seconds):
+        sleep_calls.append(seconds)
+        cancel.set()  # simulate the user clicking "Abbrechen" during the wait
+
+    session = FakeSession([
+        FakeResponse(429, headers={"Retry-After": "60"}),
+        FakeResponse(200, {"tracks": {"items": []}}),
+    ])
+    client = SpotifyClient(lambda: "token", session=session, sleep=tracking_sleep, cancel=cancel)
+
+    with pytest.raises(OperationCancelled):
+        client.search_track("query")
+
+    # Only slept one 1s chunk before the cancel was picked up, not the full 60s.
+    assert sleep_calls == [1]
+
+
+def test_server_error_backoff_is_interrupted_by_cancel():
+    """Cancel set mid-backoff-wait aborts immediately instead of sleeping through it."""
+    cancel = threading.Event()
+    cancel.set()
+    session = FakeSession([FakeResponse(500)])
+    client = SpotifyClient(lambda: "token", session=session, sleep=dummy_sleep, cancel=cancel)
+
+    with pytest.raises(OperationCancelled):
+        client.search_track("query")
+
+
+def test_no_cancel_event_behaves_like_before():
+    """Without a cancel event, retries behave exactly as before (no OperationCancelled)."""
+    session = FakeSession([
+        FakeResponse(429, headers={"Retry-After": "0"}),
+        FakeResponse(200, {"tracks": {"items": []}}),
+    ])
+    client = SpotifyClient(lambda: "token", session=session, sleep=dummy_sleep)
+
+    items = client.search_track("query")
+
+    assert items == []

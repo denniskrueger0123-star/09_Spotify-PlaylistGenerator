@@ -9,7 +9,7 @@ from . import matcher
 from .auth import SpotifyAuth
 from .config import Config
 from .csv_reader import read_songs, TITLE_HEADERS, ARTIST_HEADERS, _normalize_header
-from .errors import SpotifyApiError
+from .errors import OperationCancelled, SpotifyApiError
 from .report import ResultRow
 from .spotify_client import SpotifyClient
 
@@ -136,7 +136,7 @@ def run_generation(
     auth.get_token()
 
     token_provider = lambda: auth.get_token().access_token
-    client = client or SpotifyClient(token_provider)
+    client = client or SpotifyClient(token_provider, cancel=cancel)
 
     emit(ProgressEvent(kind="start", total=len(songs)))
 
@@ -201,6 +201,10 @@ def run_generation(
                 )
                 message = f"{progress_text} … nicht gefunden"
 
+        except OperationCancelled:
+            result.cancelled = True
+            break
+
         except SpotifyApiError as exc:
             row = ResultRow(
                 row=song.row,
@@ -222,32 +226,35 @@ def run_generation(
         emit(ProgressEvent(kind="done"))
         return result
 
-    if not params.dry_run:
-        if uris_ordered:
-            user_info = client.current_user()
-            user_id = user_info.get("id")
-            if not user_id:
-                raise SpotifyApiError("Benutzerprofil konnte nicht gelesen werden")
+    try:
+        if not params.dry_run:
+            if uris_ordered:
+                user_info = client.current_user()
+                user_id = user_info.get("id")
+                if not user_id:
+                    raise SpotifyApiError("Benutzerprofil konnte nicht gelesen werden")
 
-            playlist = client.create_playlist(
-                user_id,
-                params.playlist_name,
-                public=params.public,
-                description=params.description
-            )
-            playlist_id = playlist.get("id")
-            if not playlist_id:
-                raise SpotifyApiError("Playlist konnte nicht erstellt werden")
+                playlist = client.create_playlist(
+                    user_id,
+                    params.playlist_name,
+                    public=params.public,
+                    description=params.description
+                )
+                playlist_id = playlist.get("id")
+                if not playlist_id:
+                    raise SpotifyApiError("Playlist konnte nicht erstellt werden")
 
-            client.add_tracks(playlist_id, uris_ordered)
-            result.playlist_id = playlist_id
-            result.playlist_url = (playlist.get("external_urls") or {}).get("spotify", "")
-            if result.playlist_url:
-                emit(ProgressEvent(kind="info", message=f"Playlist erstellt: {result.playlist_url}"))
+                client.add_tracks(playlist_id, uris_ordered)
+                result.playlist_id = playlist_id
+                result.playlist_url = (playlist.get("external_urls") or {}).get("spotify", "")
+                if result.playlist_url:
+                    emit(ProgressEvent(kind="info", message=f"Playlist erstellt: {result.playlist_url}"))
+            else:
+                emit(ProgressEvent(kind="info", message="Warnung: Keine URIs gefunden, Playlist wird nicht erstellt"))
         else:
-            emit(ProgressEvent(kind="info", message="Warnung: Keine URIs gefunden, Playlist wird nicht erstellt"))
-    else:
-        emit(ProgressEvent(kind="info", message="(--dry-run: Playlist wird nicht erstellt)"))
+            emit(ProgressEvent(kind="info", message="(--dry-run: Playlist wird nicht erstellt)"))
+    except OperationCancelled:
+        result.cancelled = True
 
     emit(ProgressEvent(kind="done"))
     return result

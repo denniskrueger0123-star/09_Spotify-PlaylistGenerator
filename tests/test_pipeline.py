@@ -5,7 +5,7 @@ import threading
 import pytest
 
 from spotify_playlist_generator.config import Config
-from spotify_playlist_generator.errors import SpotifyApiError
+from spotify_playlist_generator.errors import OperationCancelled, SpotifyApiError
 from spotify_playlist_generator.pipeline import GenerationParams, GenerationResult, run_generation
 from spotify_playlist_generator.report import ResultRow
 
@@ -210,6 +210,27 @@ def test_run_generation_cancel_stops_early(tmp_path):
 
     assert result.cancelled is True
     assert result.rows == []
+    assert client.created == []
+
+
+def test_run_generation_cancel_during_retry_wait_stops_cleanly(tmp_path):
+    """A cancel raised mid-request (e.g. during a rate-limit retry wait) ends the run
+    as a normal cancellation, not as an error row for that song."""
+    csv_path = _write_csv(
+        tmp_path,
+        "title,artist\nSong One,Artist One\nSong Two,Artist Two\n",
+    )
+    client = _StubClient(
+        search_results=[[_track("Song One", "Artist One", "spotify:track:1")]],
+        search_error=[None, OperationCancelled("Vorgang abgebrochen")],
+    )
+
+    params = GenerationParams(csv_path=csv_path, playlist_name="My Playlist")
+    result = run_generation(_config(), params, client=client, auth=_StubAuth())
+
+    assert result.cancelled is True
+    assert len(result.rows) == 1  # Song One made it in, Song Two's cancel stopped the loop
+    assert result.rows[0].status == "found"
     assert client.created == []
 
 

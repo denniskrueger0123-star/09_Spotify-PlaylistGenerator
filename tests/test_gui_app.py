@@ -432,3 +432,64 @@ def test_run_without_csv_does_not_start_worker(app, fake_messagebox, monkeypatch
 
     assert started == []
     assert app.worker.is_running() is False
+
+
+# --- Client-ID-Prüfung ---
+
+class _CheckOutcome:
+    def __init__(self, ok, message):
+        self.ok = ok
+        self.message = message
+
+
+def _run_check_synchronously(app, outcome):
+    """Runs the credential check with a stub checker and drains the Tk event loop."""
+    app._on_check_credentials(checker=lambda config: outcome)
+    deadline = time.time() + 3
+    while app.settings_status_label.cget("text") == "Prüfe Client ID …" and time.time() < deadline:
+        app.root.update()
+        time.sleep(0.01)
+    app.root.update()
+
+
+def test_check_credentials_success_shows_ok(app):
+    """A successful check shows the message in the OK style."""
+    app.client_id_var.set("some-client-id")
+
+    _run_check_synchronously(app, _CheckOutcome(True, "Alles in Ordnung."))
+
+    assert app.settings_status_label.cget("text") == "Alles in Ordnung."
+    assert str(app.settings_status_label.cget("style")) == "Ok.TLabel"
+    assert str(app.check_button.cget("state")) == "normal"
+
+
+def test_check_credentials_failure_shows_danger(app):
+    """A failed check shows the message in the danger style."""
+    app.client_id_var.set("bad-id")
+
+    _run_check_synchronously(app, _CheckOutcome(False, "Client ID abgelehnt."))
+
+    assert app.settings_status_label.cget("text") == "Client ID abgelehnt."
+    assert str(app.settings_status_label.cget("style")) == "Danger.TLabel"
+    assert str(app.check_button.cget("state")) == "normal"
+
+
+def test_check_credentials_uses_form_values(app):
+    """The check is run against the values currently entered in the form."""
+    app.client_id_var.set("form-client-id")
+    app.redirect_var.set("http://127.0.0.1:9999/callback")
+    seen = []
+
+    def checker(config):
+        seen.append(config)
+        return _CheckOutcome(True, "ok")
+
+    app._on_check_credentials(checker=checker)
+    deadline = time.time() + 3
+    while not seen and time.time() < deadline:
+        app.root.update()
+        time.sleep(0.01)
+    app.root.update()
+
+    assert seen[0].client_id == "form-client-id"
+    assert seen[0].redirect_uri == "http://127.0.0.1:9999/callback"

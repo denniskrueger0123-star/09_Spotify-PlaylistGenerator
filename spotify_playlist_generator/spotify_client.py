@@ -1,18 +1,20 @@
+import threading
 import time
 
 import requests
 
 from .config import API_BASE
-from .errors import RateLimitError, SpotifyApiError
+from .errors import OperationCancelled, RateLimitError, SpotifyApiError
 
 REQUEST_TIMEOUT = (10, 30)  # (connect, read) Sekunden
+SLEEP_CHECK_INTERVAL = 1.0  # Sekunden zwischen Cancel-Prüfungen während Retry-Wartezeiten
 
 
 class SpotifyClient:
     """Client for Spotify Web API with automatic retry logic."""
 
     def __init__(self, token_provider, session: requests.Session | None = None,
-                 max_retries: int = 5, sleep=time.sleep):
+                 max_retries: int = 5, sleep=time.sleep, cancel: threading.Event | None = None):
         """
         Initialize SpotifyClient.
 
@@ -21,11 +23,29 @@ class SpotifyClient:
             session: Optional requests.Session for testing (injected dependency).
             max_retries: Maximum retry attempts for rate-limited requests.
             sleep: Injected sleep function for testing.
+            cancel: Optional Event that, when set, interrupts a retry wait immediately
+                instead of sleeping through the full backoff/Retry-After duration.
         """
         self._token_provider = token_provider
         self._session = session if session is not None else requests.Session()
         self._max_retries = max_retries
         self._sleep = sleep
+        self._cancel = cancel
+
+    def _sleep_or_cancel(self, seconds: float) -> None:
+        """Sleeps in <=1s steps, raising OperationCancelled as soon as cancel is set."""
+        if self._cancel is not None and self._cancel.is_set():
+            raise OperationCancelled("Vorgang abgebrochen")
+        if seconds <= 0:
+            self._sleep(seconds)
+            return
+        remaining = seconds
+        while remaining > 0:
+            chunk = min(SLEEP_CHECK_INTERVAL, remaining)
+            self._sleep(chunk)
+            remaining -= chunk
+            if self._cancel is not None and self._cancel.is_set():
+                raise OperationCancelled("Vorgang abgebrochen")
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
         """
@@ -85,7 +105,7 @@ class SpotifyClient:
                     sleep_seconds = int(retry_after)
                 except (ValueError, TypeError):
                     sleep_seconds = 1
-                self._sleep(sleep_seconds)
+                self._sleep_or_cancel(sleep_seconds)
                 retry_count += 1
                 continue
 
@@ -103,7 +123,7 @@ class SpotifyClient:
                         payload=payload
                     )
                 sleep_seconds = 2 ** attempt
-                self._sleep(sleep_seconds)
+                self._sleep_or_cancel(sleep_seconds)
                 attempt += 1
                 continue
 
