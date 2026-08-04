@@ -9,6 +9,44 @@ from .errors import OperationCancelled, RateLimitError, SpotifyApiError
 REQUEST_TIMEOUT = (10, 30)  # (connect, read) Sekunden
 SLEEP_CHECK_INTERVAL = 1.0  # Sekunden zwischen Cancel-Prüfungen während Retry-Wartezeiten
 
+# Seit der Web-API-Umstellung im Februar 2026 nimmt Spotify für Apps im
+# Entwicklungsmodus höchstens 10 Suchtreffer pro Anfrage an. Größere Werte
+# beantwortet die API mit einem Fehler, deshalb wird hier hart gedeckelt.
+MAX_SEARCH_LIMIT = 10
+
+
+def _explain_forbidden(payload: dict | None) -> str:
+    """
+    Baut aus einer 403-Antwort eine Meldung, die den Nutzer zur Ursache führt.
+
+    403 ist seit der Umstellung im Februar/März 2026 der Sammelfehler für die
+    Zugangsbeschränkungen des Entwicklungsmodus. Die häufigsten Ursachen werden
+    deshalb mitgenannt, sonst steht der Nutzer vor einem nackten "Forbidden".
+    """
+    detail = ""
+    if isinstance(payload, dict):
+        error_info = payload.get("error")
+        if isinstance(error_info, dict):
+            detail = (error_info.get("message") or "").strip()
+            reason = (error_info.get("reason") or "").strip()
+            if reason:
+                detail = f"{detail} ({reason})".strip()
+        elif isinstance(error_info, str):
+            detail = error_info.strip()
+
+    message = "Spotify verweigert den Zugriff (403)."
+    if detail:
+        message += f" Meldung von Spotify: {detail}."
+    message += (
+        " Übliche Ursachen seit der API-Umstellung 2026: "
+        "(1) Der Inhaber der Spotify-App braucht ein aktives Premium-Abo. "
+        "(2) Im Entwicklungsmodus dürfen nur die im Dashboard eingetragenen "
+        "Nutzerkonten (max. 5) die App verwenden – das angemeldete Konto muss "
+        "unter 'User Management' stehen. "
+        "(3) Das Kontingent des Entwicklungsmodus ist aufgebraucht."
+    )
+    return message
+
 
 class SpotifyClient:
     """Client for Spotify Web API with automatic retry logic."""
@@ -153,6 +191,13 @@ class SpotifyClient:
             except (ValueError, requests.exceptions.JSONDecodeError):
                 pass
 
+            if response.status_code == 403:
+                raise SpotifyApiError(
+                    _explain_forbidden(payload),
+                    status_code=403,
+                    payload=payload,
+                )
+
             # Extract error message from payload if available
             message = f"Spotify API error: {response.status_code}"
             if payload and isinstance(payload, dict):
@@ -185,7 +230,9 @@ class SpotifyClient:
         Args:
             query: Search query string.
             market: Optional market code (e.g., 'DE', 'US').
-            limit: Maximum number of results (default 10).
+            limit: Maximum number of results (default 10). Wird auf den von
+                Spotify erlaubten Höchstwert MAX_SEARCH_LIMIT gedeckelt, damit
+                ein zu großer Wert die Suche nicht komplett scheitern lässt.
 
         Returns:
             List of track dictionaries from the search results.
@@ -193,21 +240,28 @@ class SpotifyClient:
         params = {
             "q": query,
             "type": "track",
-            "limit": limit,
+            "limit": max(1, min(int(limit), MAX_SEARCH_LIMIT)),
         }
         if market is not None:
             params["market"] = market
 
         response = self._request("GET", "/search", params=params)
-        return response.get("tracks", {}).get("items", [])
+        tracks = response.get("tracks") or {}
+        if isinstance(tracks, list):
+            # Neuere Antwortform: tracks ist bereits die Trefferliste.
+            return tracks
+        return tracks.get("items") or []
 
-    def create_playlist(self, user_id: str, name: str, public: bool = False,
+    def create_playlist(self, name: str, public: bool = False,
                         description: str = "") -> dict:
         """
-        Create a new playlist for the user.
+        Create a new playlist for the logged-in user.
+
+        Nutzt POST /me/playlists. Der frühere Weg über
+        POST /users/{user_id}/playlists wurde von Spotify im Februar 2026
+        entfernt und antwortet seit dem 9. März 2026 mit HTTP 403.
 
         Args:
-            user_id: The user's Spotify user ID.
             name: Name of the playlist.
             public: Whether the playlist is public (default False).
             description: Optional playlist description.
@@ -215,19 +269,22 @@ class SpotifyClient:
         Returns:
             Playlist dictionary.
         """
-        path = f"/users/{user_id}/playlists"
         body = {
             "name": name,
             "public": public,
             "description": description,
         }
-        return self._request("POST", path, json=body)
+        return self._request("POST", "/me/playlists", json=body)
 
     def add_tracks(self, playlist_id: str, uris: list[str]) -> int:
         """
         Add tracks to a playlist.
 
         Tracks are added in batches of at most 100 URIs per request.
+
+        Schreibt auf POST /playlists/{id}/items. Der frühere Pfad
+        /playlists/{id}/tracks wurde mit der Umstellung im Februar 2026
+        umbenannt.
 
         Args:
             playlist_id: The playlist ID.
@@ -244,7 +301,7 @@ class SpotifyClient:
 
         for i in range(0, len(uris), batch_size):
             batch = uris[i:i + batch_size]
-            path = f"/playlists/{playlist_id}/tracks"
+            path = f"/playlists/{playlist_id}/items"
             body = {"uris": batch}
             self._request("POST", path, json=body)
             total_added += len(batch)

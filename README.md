@@ -21,7 +21,38 @@ Das Tool lässt sich auf zwei Wegen benutzen: über die **grafische Oberfläche*
 ## Voraussetzungen
 
 - Python 3.11 oder höher
-- Ein Spotify-Account (kostenlos oder Premium)
+- Ein Spotify-Account mit **aktivem Premium-Abo** für den Inhaber der Spotify-App
+  (siehe „Was Spotify seit 2026 erlaubt")
+
+## Was Spotify seit 2026 erlaubt
+
+Spotify hat die Web-API im Februar/März 2026 umgestellt. Diese Regeln gelten für
+eine App im **Entwicklungsmodus** — also für jede frisch im Dashboard angelegte App:
+
+| Regel | Wert |
+|---|---|
+| Premium-Abo des App-Inhabers | zwingend erforderlich, sonst antwortet die API mit 403 |
+| Zugelassene Nutzerkonten | max. 5, jedes muss im Dashboard unter „User Management" eingetragen sein |
+| Suchtreffer pro Anfrage | max. 10 (vorher 50) |
+| Client-IDs pro Entwickler-Account | 25, die sich ein gemeinsames Kontingent teilen |
+| Titel pro Schreibvorgang in eine Playlist | 100 — das Tool teilt größere Listen automatisch auf |
+| Anzahl Playlists / Titel pro Playlist | von der API nicht begrenzt (Spotify-Kontogrenzen gelten weiter, z. B. 10.000 Titel pro Playlist) |
+
+Zusätzlich gilt ein Ratenlimit, das über ein gleitendes 30-Sekunden-Fenster
+gerechnet wird. Wird es überschritten, antwortet Spotify mit HTTP 429 und einem
+`Retry-After`-Header; das Tool wartet dann automatisch und versucht es erneut.
+
+Endpunkte, die mit der Umstellung weggefallen sind und die dieses Tool deshalb
+nicht mehr verwendet:
+
+- `POST /users/{user_id}/playlists` → ersetzt durch `POST /me/playlists`
+- `POST /playlists/{id}/tracks` → ersetzt durch `POST /playlists/{id}/items`
+
+**Wenn die App plötzlich keinen einzigen Song mehr findet oder keine Playlist
+mehr anlegt**, ist fast immer eine dieser drei Ursachen schuld: kein Premium-Abo
+des App-Inhabers, das angemeldete Konto steht nicht in der Nutzerliste der App,
+oder das Kontingent ist aufgebraucht. Die App nennt diese Punkte inzwischen
+direkt in der Fehlermeldung.
 
 ## Setup
 
@@ -33,6 +64,8 @@ Das Tool lässt sich auf zwei Wegen benutzen: über die **grafische Oberfläche*
 4. Notiere dir die **Client-ID**
 5. Unter "Redirect URIs" füge folgende Adresse ein: `http://127.0.0.1:8888/callback`
 6. Speichern und bestätigen
+7. Unter "User Management" das eigene Spotify-Konto (Name + E-Mail-Adresse des
+   Kontos) eintragen — ohne diesen Eintrag lehnt Spotify jede Anfrage mit 403 ab
 
 **Wichtig:** Du benötigst nur die Client-ID. Das Tool nutzt den PKCE-Flow (Proof Key for Code Exchange), daher ist kein Client-Secret nötig.
 
@@ -130,7 +163,7 @@ python3 -m spotify_playlist_generator --csv examples/songs.csv --name "Öffentli
 | `--report PATH` | Pfad zur CSV-Datei für den Report | nicht gespeichert |
 | `--market CODE` | Spotify-Markt-Code (z. B. `DE`, `US`) | - |
 | `--min-score FLOAT` | Minimaler Match-Score (0.0–1.0) | 0.6 |
-| `--limit INT` | Maximale Anzahl Kandidaten pro Suchanfrage | 10 |
+| `--limit INT` | Maximale Anzahl Kandidaten pro Suchanfrage (Spotify erlaubt höchstens 10) | 10 |
 | `--dry-run` | Simuliert Suche, erstellt keine Playlist | aus |
 | `--env-file PATH` | Pfad zur `.env`-Datei | `.env` |
 | `--token-path PATH` | Pfad zur Token-Cache-Datei | `~/.spotify_playlist_generator/token.json` |

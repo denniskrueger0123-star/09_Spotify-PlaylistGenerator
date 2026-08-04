@@ -166,14 +166,21 @@ def test_build_params_types(tmp_path):
         str(tmp_path / "songs.csv"),
         "Playlist",
         public=1,
-        limit="25",
+        limit="7",
         dry_run=0,
     )
 
-    assert params.limit == 25
+    assert params.limit == 7
     assert isinstance(params.limit, int)
     assert params.public is True
     assert params.dry_run is False
+
+
+def test_build_params_caps_limit(tmp_path):
+    """Spotify nimmt seit Februar 2026 höchstens 10 Treffer pro Suche an."""
+    params = vm.build_params(str(tmp_path / "songs.csv"), "Playlist", limit="50")
+
+    assert params.limit == 10
 
 
 def test_format_score_zero_is_empty():

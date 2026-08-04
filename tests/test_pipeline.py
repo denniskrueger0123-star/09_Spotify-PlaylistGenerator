@@ -35,9 +35,8 @@ class _StubClient:
     - a list where each entry (None or an Exception) applies to one call in order.
     """
 
-    def __init__(self, search_results=None, user=None, playlist=None, search_error=None):
+    def __init__(self, search_results=None, playlist=None, search_error=None):
         self._search_results = search_results if search_results is not None else []
-        self._user = user if user is not None else {"id": "user1"}
         self._playlist = playlist if playlist is not None else {
             "id": "pl1",
             "external_urls": {"spotify": "https://open.spotify.com/playlist/pl1"},
@@ -47,9 +46,6 @@ class _StubClient:
         self.created = []
         self.added = []
         self._call_count = 0
-
-    def current_user(self):
-        return self._user
 
     def search_track(self, query, market=None, limit=10):
         self.searches.append({"query": query, "market": market, "limit": limit})
@@ -69,9 +65,8 @@ class _StubClient:
 
         return self._search_results
 
-    def create_playlist(self, user_id, name, public=False, description=""):
+    def create_playlist(self, name, public=False, description=""):
         self.created.append({
-            "user_id": user_id,
             "name": name,
             "public": public,
             "description": description,
@@ -252,18 +247,6 @@ def test_run_generation_api_error_is_isolated_per_song(tmp_path):
 
     assert result.rows[0].status == "error"
     assert result.rows[1].status == "found"
-
-
-def test_run_generation_missing_user_id_raises(tmp_path):
-    csv_path = _write_csv(tmp_path, "title,artist\nSong One,Artist One\n")
-    client = _StubClient(
-        search_results=[_track("Song One", "Artist One", "spotify:track:1")],
-        user={},
-    )
-
-    params = GenerationParams(csv_path=csv_path, playlist_name="My Playlist")
-    with pytest.raises(SpotifyApiError, match="Benutzerprofil"):
-        run_generation(_config(), params, client=client, auth=_StubAuth())
 
 
 def test_run_generation_missing_playlist_id_raises(tmp_path):

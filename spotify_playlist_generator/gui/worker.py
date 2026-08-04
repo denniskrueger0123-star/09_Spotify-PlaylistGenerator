@@ -30,14 +30,24 @@ class GenerationWorker:
         def progress(event):
             self.queue.put(("progress", event))
 
+        # Der Thread muss unter allen Umständen genau eine Abschlussmeldung
+        # hinterlassen. Die Oberfläche wartet darauf; bliebe sie aus, hinge die
+        # Anzeige für immer bei "Wird gestartet …".
+        reported = False
         try:
             result = runner(config, params, progress=progress, cancel=self.cancel_event)
         except PlaylistGeneratorError as exc:
             self.queue.put(("error", str(exc)))
+            reported = True
         except Exception as exc:
             self.queue.put(("error", f"Unerwarteter Fehler: {exc}"))
+            reported = True
         else:
             self.queue.put(("result", result))
+            reported = True
+        finally:
+            if not reported:
+                self.queue.put(("error", "Der Vorgang wurde unerwartet beendet."))
 
     def poll(self) -> list:
         messages = []

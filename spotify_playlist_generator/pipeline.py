@@ -229,13 +229,7 @@ def run_generation(
     try:
         if not params.dry_run:
             if uris_ordered:
-                user_info = client.current_user()
-                user_id = user_info.get("id")
-                if not user_id:
-                    raise SpotifyApiError("Benutzerprofil konnte nicht gelesen werden")
-
                 playlist = client.create_playlist(
-                    user_id,
                     params.playlist_name,
                     public=params.public,
                     description=params.description
