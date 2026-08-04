@@ -56,7 +56,7 @@ def apply_theme(root) -> "ttk.Style":
     f = fonts()
 
     style.configure("TFrame", background=BG)
-    style.configure("Card.TFrame", background=SURFACE)
+    style.configure("Card.TFrame", background=SURFACE, borderwidth=0, relief="flat")
 
     style.configure("TLabel", background=BG, foreground=TEXT, font=f["base"])
     style.configure("Card.TLabel", background=SURFACE, foreground=TEXT, font=f["base"])
@@ -109,6 +109,8 @@ def apply_theme(root) -> "ttk.Style":
         font=f["base"],
         focusthickness=0,
         indicatorcolor=SURFACE_HI,
+        padding=(0, 4),
+        indicatormargin=(0, 0, 8, 0),
     )
 
     style.configure(
@@ -123,7 +125,15 @@ def apply_theme(root) -> "ttk.Style":
         padding=5,
     )
 
-    style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(0, 8, 0, 0))
+    style.configure(
+        "TNotebook",
+        background=BG,
+        borderwidth=0,
+        tabmargins=(0, 8, 0, 0),
+        bordercolor=BG,
+        lightcolor=BG,
+        darkcolor=BG,
+    )
     style.configure(
         "TNotebook.Tab",
         background=BG,
@@ -131,6 +141,9 @@ def apply_theme(root) -> "ttk.Style":
         font=f["base"],
         padding=(18, 10),
         borderwidth=0,
+        bordercolor=BG,
+        lightcolor=BG,
+        darkcolor=BG,
     )
 
     style.configure(
@@ -151,7 +164,12 @@ def apply_theme(root) -> "ttk.Style":
         font=f["base"],
         rowheight=26,
         borderwidth=0,
+        relief="flat",
+        bordercolor=SURFACE,
+        lightcolor=SURFACE,
+        darkcolor=SURFACE,
     )
+    style.layout("Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
     style.configure(
         "Treeview.Heading",
         background=SURFACE_HI,
@@ -163,10 +181,14 @@ def apply_theme(root) -> "ttk.Style":
 
     style.configure(
         "Horizontal.TScale",
-        background=SURFACE,
+        background=ACCENT,
         troughcolor=SURFACE_HI,
         borderwidth=0,
+        bordercolor=BORDER,
+        lightcolor=ACCENT,
+        darkcolor=ACCENT,
     )
+    style.map("Horizontal.TScale", background=[("active", ACCENT_HOVER)])
 
     style.configure(
         "Vertical.TScrollbar",
@@ -175,6 +197,28 @@ def apply_theme(root) -> "ttk.Style":
         bordercolor=BG,
         arrowcolor=TEXT_MUTED,
         borderwidth=0,
+        lightcolor=SURFACE_HI,
+        darkcolor=SURFACE_HI,
+    )
+    style.layout("Vertical.TScrollbar", [
+        ("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+            ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"}),
+        ]}),
+    ])
+    style.map("Vertical.TScrollbar", background=[("active", BORDER)])
+
+    style.configure(
+        "TSpinbox",
+        fieldbackground=SURFACE_HI,
+        background=SURFACE_HI,
+        foreground=TEXT,
+        insertcolor=TEXT,
+        arrowcolor=TEXT_MUTED,
+        bordercolor=BORDER,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
+        borderwidth=1,
+        padding=5,
     )
 
     style.map(
@@ -191,6 +235,9 @@ def apply_theme(root) -> "ttk.Style":
         "TNotebook.Tab",
         background=[("selected", SURFACE)],
         foreground=[("selected", TEXT)],
+        lightcolor=[("selected", SURFACE), ("!selected", BG)],
+        darkcolor=[("selected", SURFACE), ("!selected", BG)],
+        bordercolor=[("selected", SURFACE), ("!selected", BG)],
     )
     style.map(
         "Treeview",

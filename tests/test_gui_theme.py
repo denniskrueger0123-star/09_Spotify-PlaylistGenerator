@@ -45,6 +45,7 @@ ALL_STYLE_NAMES = (
     "Treeview.Heading",
     "Horizontal.TScale",
     "Vertical.TScrollbar",
+    "TSpinbox",
 )
 
 
