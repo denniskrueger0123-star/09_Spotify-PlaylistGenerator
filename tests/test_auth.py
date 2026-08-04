@@ -225,24 +225,30 @@ def test_run_login_flow_raises_on_timeout(monkeypatch, tmp_path):
 
 # --- check_credentials ---
 
-class _CheckResponse:
-    """Fake response for the authorize endpoint check."""
+class _TokenCheckResponse:
+    """Fake token-endpoint response carrying an OAuth error payload."""
 
-    def __init__(self, status_code=302, location=""):
+    def __init__(self, status_code=400, payload=None, raise_json=False):
         self.status_code = status_code
-        self.headers = {"Location": location} if location else {}
+        self._payload = payload if payload is not None else {}
+        self._raise_json = raise_json
+
+    def json(self):
+        if self._raise_json:
+            raise ValueError("not json")
+        return self._payload
 
 
-class _CheckSession:
-    """Session whose get() returns a fixed response and records the call."""
+class _TokenCheckSession:
+    """Session whose post() returns a fixed response and records the call."""
 
     def __init__(self, response=None, error=None):
         self._response = response
         self._error = error
-        self.calls = []
+        self.posts = []
 
-    def get(self, url, params=None, **kwargs):
-        self.calls.append({"url": url, "params": params, "kwargs": kwargs})
+    def post(self, url, data=None, **kwargs):
+        self.posts.append({"url": url, "data": data, "kwargs": kwargs})
         if self._error is not None:
             raise self._error
         return self._response
@@ -250,78 +256,42 @@ class _CheckSession:
 
 def test_check_credentials_empty_client_id_fails():
     """An empty client ID is rejected without any network call."""
-    config = _make_config()
-    config = Config(client_id="", redirect_uri=config.redirect_uri,
-                    token_path=config.token_path, client_secret="")
-    session = _CheckSession(_CheckResponse())
+    config = Config(client_id="", redirect_uri="http://127.0.0.1:8888/callback",
+                    token_path=Path("/tmp/t.json"), client_secret="")
+    session = _TokenCheckSession(_TokenCheckResponse())
 
     outcome = check_credentials(config, session=session)
 
     assert outcome.status == CHECK_INVALID
-    assert session.calls == []
+    assert session.posts == []
 
 
-def test_check_credentials_accepts_redirect_to_login():
-    """A redirect without an error parameter means Spotify accepted the client ID."""
-    session = _CheckSession(_CheckResponse(302, "https://accounts.spotify.com/login?continue=x"))
-
-    outcome = check_credentials(_make_config(), session=session)
-
-    assert outcome.status == CHECK_OK
-
-
-def test_check_credentials_detects_invalid_client_id():
-    """An OAuth error parameter means the client ID is not accepted."""
-    session = _CheckSession(_CheckResponse(302, "https://example.com/cb?error=invalid_client"))
+def test_check_credentials_invalid_client_is_rejected():
+    """invalid_client means Spotify does not know this client ID."""
+    session = _TokenCheckSession(_TokenCheckResponse(401, {"error": "invalid_client"}))
 
     outcome = check_credentials(_make_config(), session=session)
 
     assert outcome.status == CHECK_INVALID
 
 
-def test_check_credentials_detects_redirect_uri_mismatch():
-    """A redirect_uri error is reported with a specific message."""
-    session = _CheckSession(_CheckResponse(302, "https://example.com/cb?error=invalid_redirect_uri"))
+def test_check_credentials_truncated_id_is_rejected():
+    """A half-deleted client ID must be reported as invalid, never as accepted."""
+    config = Config(client_id="7919cf77251c", redirect_uri="http://127.0.0.1:8888/callback",
+                    token_path=Path("/tmp/t.json"), client_secret="")
+    session = _TokenCheckSession(_TokenCheckResponse(400, {"error": "invalid_client"}))
 
-    outcome = check_credentials(_make_config(), session=session)
+    outcome = check_credentials(config, session=session)
 
     assert outcome.status == CHECK_INVALID
-    assert "Redirect URI" in outcome.message
-
-
-def test_check_credentials_handles_no_network():
-    """A connection failure is reported instead of raising."""
-    session = _CheckSession(error=requests.exceptions.ConnectionError("no route"))
-
-    outcome = check_credentials(_make_config(), session=session)
-
-    assert outcome.status == CHECK_UNKNOWN
-    assert "Verbindung" in outcome.message
-
-
-def test_check_credentials_sends_timeout():
-    """The check passes a timeout so it cannot hang forever."""
-    session = _CheckSession(_CheckResponse(302, "https://accounts.spotify.com/login"))
-
-    check_credentials(_make_config(), session=session)
-
-    assert session.calls[0]["kwargs"]["timeout"] is not None
-
-
-def test_check_credentials_unexpected_200_is_not_a_pass():
-    """A 200 (e.g. an HTML error page) must NOT be reported as a valid client ID."""
-    session = _CheckSession(_CheckResponse(200, ""))
-
-    outcome = check_credentials(_make_config(), session=session)
-
-    assert outcome.status == CHECK_UNKNOWN
     assert outcome.ok is False
 
 
-def test_check_credentials_ignores_error_substring_elsewhere_in_url():
-    """The word 'error' outside the OAuth error parameter must not fail the check."""
-    session = _CheckSession(
-        _CheckResponse(302, "https://accounts.spotify.com/login?continue=https%3A%2F%2Ferror_page")
+def test_check_credentials_invalid_grant_proves_client_id_is_valid():
+    """invalid_grant means only our deliberately bogus code was refused: the ID is good."""
+    session = _TokenCheckSession(
+        _TokenCheckResponse(400, {"error": "invalid_grant",
+                                  "error_description": "Invalid authorization code"})
     )
 
     outcome = check_credentials(_make_config(), session=session)
@@ -329,12 +299,62 @@ def test_check_credentials_ignores_error_substring_elsewhere_in_url():
     assert outcome.status == CHECK_OK
 
 
-def test_check_credentials_sends_pkce_params_like_the_real_login():
-    """The check mirrors the real login request so its verdict is meaningful."""
-    session = _CheckSession(_CheckResponse(302, "https://accounts.spotify.com/login?continue=x"))
+def test_check_credentials_reports_redirect_uri_mismatch():
+    """A redirect-URI complaint is surfaced specifically."""
+    session = _TokenCheckSession(
+        _TokenCheckResponse(400, {"error": "invalid_grant",
+                                  "error_description": "Invalid redirect URI"})
+    )
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.status == CHECK_INVALID
+    assert "Redirect URI" in outcome.message
+
+
+def test_check_credentials_unknown_error_is_inconclusive():
+    """An unfamiliar OAuth error must not be turned into a pass or a fail."""
+    session = _TokenCheckSession(_TokenCheckResponse(400, {"error": "server_error"}))
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.status == CHECK_UNKNOWN
+
+
+def test_check_credentials_non_json_response_is_inconclusive():
+    """An HTML error page must never be read as a green light."""
+    session = _TokenCheckSession(_TokenCheckResponse(200, raise_json=True))
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.status == CHECK_UNKNOWN
+    assert outcome.ok is False
+
+
+def test_check_credentials_empty_payload_is_inconclusive():
+    """A 200 with no error field is not proof of a valid client ID."""
+    session = _TokenCheckSession(_TokenCheckResponse(200, {}))
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.status == CHECK_UNKNOWN
+
+
+def test_check_credentials_handles_no_network():
+    """A connection failure is inconclusive, not a verdict on the client ID."""
+    session = _TokenCheckSession(error=requests.exceptions.ConnectionError("no route"))
+
+    outcome = check_credentials(_make_config(), session=session)
+
+    assert outcome.status == CHECK_UNKNOWN
+    assert "Verbindung" in outcome.message
+
+
+def test_check_credentials_sends_timeout_and_client_id():
+    """The check cannot hang and sends the client ID being tested."""
+    session = _TokenCheckSession(_TokenCheckResponse(400, {"error": "invalid_grant"}))
 
     check_credentials(_make_config(), session=session)
 
-    params = session.calls[0]["params"]
-    assert params["code_challenge_method"] == "S256"
-    assert params["code_challenge"]
+    assert session.posts[0]["kwargs"]["timeout"] is not None
+    assert session.posts[0]["data"]["client_id"] == "cid"
