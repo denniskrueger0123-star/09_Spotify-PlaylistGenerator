@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import ConfigError
+from .settings import load_settings
 
 # Constants
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:8888/callback"
@@ -19,6 +20,7 @@ class Config:
     client_id: str
     redirect_uri: str
     token_path: Path
+    client_secret: str = ""
 
 
 def load_dotenv(path: Path) -> dict[str, str]:
@@ -58,12 +60,13 @@ def load_dotenv(path: Path) -> dict[str, str]:
     return result
 
 
-def load_config(env_file: Path | None = None) -> Config:
+def load_config(env_file: Path | None = None, settings_path: Path | None = None) -> Config:
     """
-    Load configuration from environment variables and .env file.
+    Load configuration from environment variables, settings.json and .env file.
 
-    Environment variables take precedence over .env file values.
+    Precedence order: os.environ -> settings.json -> .env file -> Default.
     - Reads SPOTIFY_CLIENT_ID (required)
+    - Reads SPOTIFY_CLIENT_SECRET (optional, defaults to "")
     - Reads SPOTIFY_REDIRECT_URI (optional, defaults to DEFAULT_REDIRECT_URI)
     - Reads SPOTIFY_TOKEN_PATH (optional, defaults to DEFAULT_TOKEN_PATH)
 
@@ -72,13 +75,15 @@ def load_config(env_file: Path | None = None) -> Config:
     if env_file is None:
         env_file = Path(".env")
 
-    # Load from .env file
+    # Load from settings.json and .env file
+    settings = load_settings(settings_path)
     env_vars = load_dotenv(env_file)
 
-    # Environment variables take precedence
-    client_id = os.environ.get("SPOTIFY_CLIENT_ID") or env_vars.get("SPOTIFY_CLIENT_ID", "")
-    redirect_uri = os.environ.get("SPOTIFY_REDIRECT_URI") or env_vars.get("SPOTIFY_REDIRECT_URI", DEFAULT_REDIRECT_URI)
-    token_path_str = os.environ.get("SPOTIFY_TOKEN_PATH") or env_vars.get("SPOTIFY_TOKEN_PATH", str(DEFAULT_TOKEN_PATH))
+    # Precedence: os.environ -> settings.json -> .env -> Default
+    client_id = os.environ.get("SPOTIFY_CLIENT_ID") or settings.get("client_id") or env_vars.get("SPOTIFY_CLIENT_ID", "")
+    client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET") or settings.get("client_secret") or env_vars.get("SPOTIFY_CLIENT_SECRET", "")
+    redirect_uri = os.environ.get("SPOTIFY_REDIRECT_URI") or settings.get("redirect_uri") or env_vars.get("SPOTIFY_REDIRECT_URI") or DEFAULT_REDIRECT_URI
+    token_path_str = os.environ.get("SPOTIFY_TOKEN_PATH") or settings.get("token_path") or env_vars.get("SPOTIFY_TOKEN_PATH") or str(DEFAULT_TOKEN_PATH)
     token_path = Path(token_path_str)
 
     if not client_id:
@@ -92,4 +97,5 @@ def load_config(env_file: Path | None = None) -> Config:
         client_id=client_id,
         redirect_uri=redirect_uri,
         token_path=token_path,
+        client_secret=client_secret,
     )

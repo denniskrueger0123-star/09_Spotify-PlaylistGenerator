@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import spotify_playlist_generator.settings as settings_module
 from spotify_playlist_generator.config import (
     DEFAULT_REDIRECT_URI,
     DEFAULT_TOKEN_PATH,
@@ -13,6 +14,12 @@ from spotify_playlist_generator.config import (
     load_dotenv,
 )
 from spotify_playlist_generator.errors import ConfigError
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings(monkeypatch, tmp_path):
+    """Keep the real user settings file out of these tests."""
+    monkeypatch.setattr(settings_module, "DEFAULT_SETTINGS_PATH", tmp_path / "no-settings.json")
 
 
 def test_load_dotenv_basic(tmp_path):
@@ -203,3 +210,113 @@ def test_load_config_default_env_file(monkeypatch, tmp_path):
     # So this should raise ConfigError
     with pytest.raises(ConfigError):
         load_config(None)
+
+
+def test_load_config_uses_settings_json(monkeypatch, tmp_path):
+    """load_config reads client_id from settings.json when no env/.env value is set."""
+    monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
+    monkeypatch.delenv("SPOTIFY_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("SPOTIFY_REDIRECT_URI", raising=False)
+    monkeypatch.delenv("SPOTIFY_TOKEN_PATH", raising=False)
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text('{"client_id": "settings_client_id"}')
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+
+    config = load_config(env_file, settings_path=settings_path)
+
+    assert config.client_id == "settings_client_id"
+
+
+def test_load_config_environ_beats_settings(monkeypatch, tmp_path):
+    """os.environ has precedence over settings.json."""
+    monkeypatch.setenv("SPOTIFY_CLIENT_ID", "env_client_id")
+    monkeypatch.delenv("SPOTIFY_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("SPOTIFY_REDIRECT_URI", raising=False)
+    monkeypatch.delenv("SPOTIFY_TOKEN_PATH", raising=False)
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text('{"client_id": "settings_client_id"}')
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+
+    config = load_config(env_file, settings_path=settings_path)
+
+    assert config.client_id == "env_client_id"
+
+
+def test_load_config_settings_beats_dotenv(monkeypatch, tmp_path):
+    """settings.json has precedence over .env file values."""
+    monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
+    monkeypatch.delenv("SPOTIFY_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("SPOTIFY_REDIRECT_URI", raising=False)
+    monkeypatch.delenv("SPOTIFY_TOKEN_PATH", raising=False)
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text('{"client_id": "settings_client_id"}')
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("SPOTIFY_CLIENT_ID=dotenv_client_id\n")
+
+    config = load_config(env_file, settings_path=settings_path)
+
+    assert config.client_id == "settings_client_id"
+
+
+def test_load_config_client_secret_default_empty(monkeypatch, tmp_path):
+    """load_config defaults client_secret to an empty string when unset."""
+    monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
+    monkeypatch.delenv("SPOTIFY_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("SPOTIFY_REDIRECT_URI", raising=False)
+    monkeypatch.delenv("SPOTIFY_TOKEN_PATH", raising=False)
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text('{"client_id": "test_id"}')
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+
+    config = load_config(env_file, settings_path=settings_path)
+
+    assert config.client_secret == ""
+
+
+def test_load_config_client_secret_from_settings(monkeypatch, tmp_path):
+    """load_config reads client_secret from settings.json."""
+    monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
+    monkeypatch.delenv("SPOTIFY_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("SPOTIFY_REDIRECT_URI", raising=False)
+    monkeypatch.delenv("SPOTIFY_TOKEN_PATH", raising=False)
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text('{"client_id": "test_id", "client_secret": "settings_secret"}')
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+
+    config = load_config(env_file, settings_path=settings_path)
+
+    assert config.client_secret == "settings_secret"
+
+
+def test_load_config_redirect_uri_from_settings(monkeypatch, tmp_path):
+    """load_config reads redirect_uri from settings.json."""
+    monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
+    monkeypatch.delenv("SPOTIFY_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("SPOTIFY_REDIRECT_URI", raising=False)
+    monkeypatch.delenv("SPOTIFY_TOKEN_PATH", raising=False)
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        '{"client_id": "test_id", "redirect_uri": "http://settings:1234/callback"}'
+    )
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+
+    config = load_config(env_file, settings_path=settings_path)
+
+    assert config.redirect_uri == "http://settings:1234/callback"
