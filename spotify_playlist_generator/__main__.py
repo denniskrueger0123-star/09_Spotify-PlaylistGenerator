@@ -1,0 +1,6 @@
+"""Main entry point for Spotify Playlist Generator."""
+
+from .cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())
