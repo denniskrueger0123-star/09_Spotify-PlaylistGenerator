@@ -25,9 +25,9 @@ def load_logo(target_width: int = 260):
     Ein fehlendes oder nicht ladbares Logo darf die App niemals
     am Starten hindern.
     """
-    import tkinter as tk
-
-    # Schritt 1: Datei nicht vorhanden
+    # Fehlt die Datei, wird nichts geladen und auch nichts importiert. Dieser Weg
+    # muss ohne tkinter auskommen, sonst reißt ein fehlendes Logo die Anwendung
+    # in Umgebungen mit, in denen tkinter nicht bereitsteht.
     if not LOGO_PATH.exists():
         return None
 
@@ -50,6 +50,8 @@ def load_logo(target_width: int = 260):
 
     # Schritt 3: Ohne Pillow, tk.PhotoImage mit subsample
     try:
+        import tkinter as tk
+
         photo = tk.PhotoImage(file=str(LOGO_PATH))
         # Verkleinern mit subsample
         width = photo.width()

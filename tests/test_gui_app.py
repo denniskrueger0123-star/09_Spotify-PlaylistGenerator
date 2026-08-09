@@ -32,17 +32,25 @@ def root():
 def app(root, tmp_path):
     from spotify_playlist_generator.gui.app import App
 
-    return App(root, settings_path=tmp_path / "settings.json")
+    # Auch die Lizenzdatei liegt im temporären Verzeichnis. Sonst läse und
+    # beschriebe der Test die echte Datei im Benutzerverzeichnis.
+    return App(
+        root,
+        settings_path=tmp_path / "settings.json",
+        license_path=tmp_path / "license.json",
+    )
 
 
-def test_app_builds_three_tabs(app):
-    """The main window has exactly three tabs with the expected labels."""
+def test_app_builds_five_tabs(app):
+    """The main window has exactly five tabs with the expected labels."""
     tabs = app.notebook.tabs()
-    assert len(tabs) == 3
+    assert len(tabs) == 5
     texts = [app.notebook.tab(t, "text") for t in tabs]
     assert any("Playlist erstellen" in t for t in texts)
     assert any("Ergebnis" in t for t in texts)
     assert any("Einstellungen" in t for t in texts)
+    assert any("Hilfe" in t for t in texts)
+    assert any("Über" in t for t in texts)
 
 
 def test_window_title(app, root):
@@ -554,3 +562,68 @@ def test_cancelled_run_with_playlist_mentions_it_in_status(app):
 
     assert "angelegt" in app.status_label.cget("text")
     assert str(app.open_playlist_button.cget("state")) == "normal"
+
+
+def test_language_switch_translates_every_registered_label(app):
+    """
+    Umschalten auf Englisch übersetzt alle vorgemerkten Beschriftungen.
+
+    Der Test vergleicht gegen die Wörterbücher selbst, damit eine neu
+    hinzugefügte Beschriftung, die beim Umschalten vergessen wird, auffällt.
+    """
+    from spotify_playlist_generator import i18n
+
+    app.lang_var.set("en")
+    app._on_language_change()
+
+    for widget, key in app._tr_widgets:
+        assert widget.cget("text") == i18n.TEXTS["en"][key], f"{key} blieb deutsch"
+
+
+def test_language_switch_updates_tab_labels(app):
+    """Die Beschriftungen der beiden neuen Reiter folgen der Sprachwahl."""
+    app.lang_var.set("en")
+    app._on_language_change()
+    texts = [app.notebook.tab(t, "text") for t in app.notebook.tabs()]
+    assert any("Help" in t for t in texts)
+    assert any("About" in t for t in texts)
+
+    app.lang_var.set("de")
+    app._on_language_change()
+    texts = [app.notebook.tab(t, "text") for t in app.notebook.tabs()]
+    assert any("Hilfe" in t for t in texts)
+    assert any("Über" in t for t in texts)
+
+
+def test_language_choice_survives_restart(root, tmp_path):
+    """Die gewählte Sprache steht beim nächsten Start wieder da."""
+    from spotify_playlist_generator.gui.app import App
+
+    settings_path = tmp_path / "settings.json"
+    first = App(root, settings_path=settings_path, license_path=tmp_path / "license.json")
+    first.lang_var.set("en")
+    first._on_language_change()
+
+    second_root = tk.Toplevel(root)
+    second = App(second_root, settings_path=settings_path, license_path=tmp_path / "license.json")
+    assert second.lang_var.get() == "en"
+
+
+def test_help_text_changes_with_language(app):
+    """Der Hilfetext wird beim Umschalten neu aufgebaut."""
+    deutsch = app.help_text.get("1.0", "end")
+    app.lang_var.set("en")
+    app._on_language_change()
+    englisch = app.help_text.get("1.0", "end")
+
+    assert "Einmalige Einrichtung" in deutsch
+    assert "One-time setup" in englisch
+    assert deutsch != englisch
+
+
+def test_license_card_shows_missing_state_at_start(app):
+    """Ohne hinterlegten Schlüssel steht die Lizenzkarte nicht leer da."""
+    from spotify_playlist_generator import i18n
+
+    assert app.license_status.state == "missing"
+    assert app.license_status_label.cget("text") == i18n.TEXTS["de"]["license.missing"]

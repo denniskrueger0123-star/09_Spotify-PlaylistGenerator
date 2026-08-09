@@ -20,58 +20,70 @@ from spotify_playlist_generator.licensing import (
     save_state,
 )
 
-# Check if cryptography is available (without importing it here to avoid collection errors)
-HAS_CRYPTO = False
+# Die Signaturtests brauchen cryptography. Der Import steht in einem try, weil das
+# Paket in manchen Umgebungen zwar installiert, aber nicht ladbar ist. Nur ein echter
+# Ladeversuch verrät das – eine feste Zuweisung würde die Tests still abschalten und
+# damit genau die Prüfung verstecken, auf der das Lizenzsystem beruht.
+# BaseException, weil ein gegen unpassende Systembibliotheken gebautes cryptography
+# mit einer PanicException aus der Rust-Anbindung abbricht statt mit ImportError.
+try:  # pragma: no cover - hängt von der Umgebung ab
+    from cryptography.hazmat.primitives.asymmetric import ed25519 as _ed25519_probe
+
+    HAS_CRYPTO = _ed25519_probe is not None
+except (KeyboardInterrupt, SystemExit):
+    raise
+except BaseException:
+    HAS_CRYPTO = False
 
 
 def _make_keypair():
     """Generate Ed25519 keypair for testing."""
     if not HAS_CRYPTO:
         pytest.skip("cryptography not available")
-    try:
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.asymmetric import ed25519
 
-        private_key = ed25519.Ed25519PrivateKey.generate()
-        public_key = private_key.public_key()
-        public_key_hex = public_key.public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        ).hex()
-        return private_key, public_key_hex
-    except Exception:
-        pytest.skip("cryptography not available")
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    public_key = private_key.public_key()
+    public_key_hex = public_key.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    ).hex()
+    return private_key, public_key_hex
 
 
-def _make_license_key(private_key, name="Test Customer", key_id="test1", issued=None, expires=None):
+# Unterscheidet "nicht angegeben" von "ausdrücklich unbefristet". Ohne dieses
+# Merkmal ließe sich ein unbefristeter Schlüssel im Test gar nicht bauen, weil
+# None bereits für die Vorgabe von einem Jahr steht.
+_UNSET = object()
+
+
+def _make_license_key(private_key, name="Test Customer", key_id="test1",
+                      issued=None, expires=_UNSET):
     """Create a valid signed license key."""
-    if not HAS_CRYPTO:
-        pytest.skip("cryptography not available")
-    try:
-        import base64
+    import base64
 
-        if issued is None:
-            issued = date.today()
-        if expires is None:
-            expires = date.today() + timedelta(days=365)
+    if issued is None:
+        issued = date.today()
+    if expires is _UNSET:
+        expires = date.today() + timedelta(days=365)
 
-        payload_dict = {
-            "n": name,
-            "id": key_id,
-            "i": issued.isoformat(),
-            "e": expires.isoformat() if expires else None,
-        }
+    payload_dict = {
+        "n": name,
+        "id": key_id,
+        "i": issued.isoformat(),
+        "e": expires.isoformat() if expires is not None else None,
+    }
 
-        payload_json = json.dumps(payload_dict, separators=(",", ":"), ensure_ascii=False)
-        payload_bytes = payload_json.encode("utf-8")
-        signature_bytes = private_key.sign(payload_bytes)
+    payload_json = json.dumps(payload_dict, separators=(",", ":"), ensure_ascii=False)
+    payload_bytes = payload_json.encode("utf-8")
+    signature_bytes = private_key.sign(payload_bytes)
 
-        payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
-        signature_b64 = base64.urlsafe_b64encode(signature_bytes).decode("ascii").rstrip("=")
+    payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
+    signature_b64 = base64.urlsafe_b64encode(signature_bytes).decode("ascii").rstrip("=")
 
-        return f"KDS1.{payload_b64}.{signature_b64}"
-    except Exception:
-        pytest.skip("cryptography not available")
+    return f"KDS1.{payload_b64}.{signature_b64}"
 
 
 # Tests that don't require cryptography
@@ -235,3 +247,57 @@ def test_check_unlimited_key_has_no_days_left(monkeypatch):
     assert status.state == STATE_VALID
     assert status.days_left is None
     assert status.license.expires is None
+
+
+def test_tooling_error_is_unchecked_not_invalid(monkeypatch):
+    """
+    Eine unbrauchbare Krypto-Bibliothek führt zu STATE_UNCHECKED.
+
+    Der Schlüssel des Kunden ist in diesem Fall womöglich tadellos – nur die
+    Prüfung lässt sich auf seinem Rechner nicht durchführen. Ihn als ungültig
+    zu melden wäre eine falsche Anschuldigung.
+    """
+    monkeypatch.setattr(licensing_module, "PUBLIC_KEY_HEX", "aa" * 32)
+
+    def kaputt(*args, **kwargs):
+        raise licensing_module.ToolingError("cryptography nicht verwendbar")
+
+    monkeypatch.setattr(licensing_module, "_verify_signature", kaputt)
+
+    # Eine syntaktisch einwandfreie Nutzlast, damit wirklich die Signaturprüfung greift
+    payload = json.dumps(
+        {"n": "Kunde", "id": "a1", "i": "2026-01-01", "e": "2027-01-01"},
+        separators=(",", ":"),
+    ).encode()
+    import base64
+    key = "KDS1.{}.{}".format(
+        base64.urlsafe_b64encode(payload).decode().rstrip("="),
+        base64.urlsafe_b64encode(b"x" * 64).decode().rstrip("="),
+    )
+
+    status = check(key, date(2026, 6, 1))
+
+    assert status.state == STATE_UNCHECKED
+    assert "cryptography" in status.detail
+
+
+def test_tampered_key_stays_invalid(monkeypatch):
+    """Ein echter Signaturfehler bleibt STATE_INVALID – die Trennung muss halten."""
+    monkeypatch.setattr(licensing_module, "PUBLIC_KEY_HEX", "aa" * 32)
+
+    def falsch(*args, **kwargs):
+        raise licensing_module.LicenseError("Signatur ungültig")
+
+    monkeypatch.setattr(licensing_module, "_verify_signature", falsch)
+
+    payload = json.dumps(
+        {"n": "Kunde", "id": "a1", "i": "2026-01-01", "e": "2027-01-01"},
+        separators=(",", ":"),
+    ).encode()
+    import base64
+    key = "KDS1.{}.{}".format(
+        base64.urlsafe_b64encode(payload).decode().rstrip("="),
+        base64.urlsafe_b64encode(b"x" * 64).decode().rstrip("="),
+    )
+
+    assert check(key, date(2026, 6, 1)).state == STATE_INVALID

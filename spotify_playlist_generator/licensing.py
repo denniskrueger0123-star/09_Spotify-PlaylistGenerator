@@ -31,6 +31,18 @@ class LicenseError(Exception):
     pass
 
 
+class ToolingError(LicenseError):
+    """
+    Die Prüfung selbst ist nicht durchführbar, etwa weil cryptography fehlt
+    oder unbrauchbar installiert ist.
+
+    Bewusst von LicenseError getrennt: Am Schlüssel des Kunden liegt es dann
+    nämlich nicht. Ihn als ungültig zu melden hieße, einem zahlenden Kunden
+    eine Fälschung zu unterstellen, obwohl der Fehler auf seinem Rechner liegt.
+    """
+    pass
+
+
 @dataclass(frozen=True)
 class License:
     """Lizenzinformation aus einem gültigen Schlüssel."""
@@ -139,10 +151,17 @@ def _verify_signature(payload_bytes: bytes, signature_bytes: bytes) -> None:
     """
     Prüft Ed25519-Signatur. Wirft LicenseError bei falscher Signatur.
     """
+    # Hier steht bewusst BaseException und nicht Exception: Ist cryptography zwar
+    # installiert, aber gegen unpassende Systembibliotheken gebaut, bricht der Import
+    # nicht mit ImportError ab, sondern mit einer PanicException aus der Rust-Anbindung.
+    # Die stammt von BaseException und würde sonst bis in den Programmstart durchschlagen
+    # und die Anwendung beenden – wegen einer Lizenzprüfung, die nur informieren soll.
     try:
         from cryptography.hazmat.primitives.asymmetric import ed25519
-    except ImportError:
-        raise LicenseError("cryptography nicht installiert")
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as exc:
+        raise ToolingError(f"cryptography nicht verwendbar: {exc}")
 
     try:
         # Öffentlichen Schlüssel aus hex-String laden
@@ -172,9 +191,12 @@ def check(key_text: str | None, now: date, last_seen: date | None = None) -> Lic
     if not key_text:
         return LicenseStatus(state=STATE_MISSING)
 
-    # 2. Schlüssel parsen
+    # 2. Schlüssel parsen. Lässt sich die Prüfung technisch nicht durchführen,
+    #    gilt der Schlüssel als ungeprüft und nicht als ungültig.
     try:
         license = parse_key(key_text)
+    except ToolingError as e:
+        return LicenseStatus(state=STATE_UNCHECKED, detail=str(e))
     except LicenseError as e:
         return LicenseStatus(state=STATE_INVALID, detail=str(e))
 
