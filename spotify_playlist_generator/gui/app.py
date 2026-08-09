@@ -4,11 +4,14 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
 from pathlib import Path
+from datetime import date
 
 import queue
 import threading
 
 from .. import __version__
+from .. import i18n
+from .. import licensing
 from ..auth import (
     CHECK_INVALID,
     CHECK_OK,
@@ -25,6 +28,7 @@ from ..report import write_report
 from ..settings import load_settings, save_settings
 from ..spotify_client import MAX_SEARCH_LIMIT
 from . import theme
+from . import branding
 from . import viewmodel as vm
 from .worker import GenerationWorker
 
@@ -63,12 +67,18 @@ class App:
         self.redirect_var = tk.StringVar()
         self.token_path_var = tk.StringVar()
 
+        # Internationalisierung und Lizenzierung
+        self.lang_var = tk.StringVar()
+        self._logo_image = None
+        self.license_status = None
+
         self.worker = GenerationWorker()
         self._poll_job = None
         self._check_queue = queue.Queue()
 
         self._build()
         self._load_settings_into_form()
+        self._load_license_state()
 
     def _card(self, parent, title):
         """Legt eine Karte mit Überschrift an und gibt (karte, inhalt) zurück."""
@@ -104,6 +114,8 @@ class App:
         self._build_run_tab()
         self._build_result_tab()
         self._build_settings_tab()
+        self._build_help_tab()
+        self._build_about_tab()
 
     def _build_run_tab(self):
         tab = ttk.Frame(self.notebook, style="TFrame", padding=16)
@@ -339,6 +351,242 @@ class App:
         ttk.Label(
             body, text=f"Entwickler: {DEVELOPER}", style="CardMuted.TLabel"
         ).pack(anchor="w", pady=(4, 0))
+
+    def _build_help_tab(self):
+        """Hilfe-Reiter mit zweisprachigen Hilfetexten."""
+        tab = ttk.Frame(self.notebook, style="TFrame", padding=16)
+        self.help_tab_index = self.notebook.add(tab, text=i18n.t(i18n.DEFAULT_LANGUAGE, "tab.help"))
+
+        # Sprachumschalter oben rechts
+        lang_container = ttk.Frame(tab, style="TFrame")
+        lang_container.pack(fill="x", pady=(0, 12))
+
+        ttk.Label(lang_container, text=i18n.t(i18n.DEFAULT_LANGUAGE, "lang.label"), style="Card.TLabel").pack(side="left")
+
+        lang_frame = ttk.Frame(lang_container, style="TFrame")
+        lang_frame.pack(side="right")
+        ttk.Radiobutton(lang_frame, text="Deutsch", variable=self.lang_var, value="de",
+                       command=self._on_language_change).pack(side="left")
+        ttk.Radiobutton(lang_frame, text="English", variable=self.lang_var, value="en",
+                       command=self._on_language_change).pack(side="left", padx=(10, 0))
+
+        # Text-Widget mit Bildlaufleiste
+        text_frame = ttk.Frame(tab, style="Card.TFrame")
+        text_frame.pack(fill="both", expand=True)
+
+        self.help_text = tk.Text(
+            text_frame, height=10, relief="flat", borderwidth=0,
+            background=theme.SURFACE, foreground=theme.TEXT_MUTED,
+            insertbackground=theme.TEXT, font=theme.fonts()["base"],
+            state="disabled", wrap="word", highlightthickness=0
+        )
+        self.help_text.pack(side="left", fill="both", expand=True)
+
+        scroll = ttk.Scrollbar(text_frame, orient="vertical", command=self.help_text.yview)
+        scroll.pack(side="right", fill="y")
+        self.help_text.configure(yscrollcommand=scroll.set)
+
+        # Textmarken für verschiedene Abschnitte
+        self.help_text.tag_configure("h1", font=(theme.fonts()["base"][0], theme.fonts()["base"][1] + 8, "bold"),
+                                     foreground=theme.TEXT, spacing1=18)
+        self.help_text.tag_configure("h2", font=(theme.fonts()["base"][0], theme.fonts()["base"][1] + 2, "bold"),
+                                     foreground=theme.ACCENT, spacing1=12)
+        self.help_text.tag_configure("p", foreground=theme.TEXT_MUTED, spacing3=6)
+        self.help_text.tag_configure("li", foreground=theme.TEXT_MUTED, lmargin1=24, lmargin2=24)
+
+        # Sprache setzen
+        settings = load_settings(self.settings_path)
+        lang = settings.get("language", i18n.DEFAULT_LANGUAGE)
+        self.lang_var.set(lang)
+
+        # Hilfetexte rendern
+        self._render_help()
+
+    def _build_about_tab(self):
+        """Über-Reiter mit Branding, Lizenz und Links."""
+        tab = ttk.Frame(self.notebook, style="TFrame", padding=16)
+        self.about_tab_index = self.notebook.add(tab, text=i18n.t(i18n.DEFAULT_LANGUAGE, "tab.about"))
+
+        # Sprachumschalter oben rechts
+        lang_container = ttk.Frame(tab, style="TFrame")
+        lang_container.pack(fill="x", pady=(0, 12))
+
+        ttk.Label(lang_container, text=i18n.t(i18n.DEFAULT_LANGUAGE, "lang.label"), style="Card.TLabel").pack(side="left")
+
+        lang_frame = ttk.Frame(lang_container, style="TFrame")
+        lang_frame.pack(side="right")
+        ttk.Radiobutton(lang_frame, text="Deutsch", variable=self.lang_var, value="de",
+                       command=self._on_language_change).pack(side="left")
+        ttk.Radiobutton(lang_frame, text="English", variable=self.lang_var, value="en",
+                       command=self._on_language_change).pack(side="left", padx=(10, 0))
+
+        # Karte Krüger Digital Solutions mit Logo
+        card, body = self._card(tab, "")
+        logo = branding.load_logo()
+        if logo:
+            self._logo_image = logo
+            ttk.Label(body, image=logo).pack(anchor="w", pady=(0, 12))
+        else:
+            ttk.Label(body, text="KDS", style="H1.TLabel").pack(anchor="w")
+            ttk.Label(body, text="KRÜGER DIGITAL SOLUTIONS", style="CardMuted.TLabel").pack(anchor="w", pady=(2, 0))
+
+        # Karte Programm
+        _, body = self._card(tab, "")
+        ttk.Label(body, text=i18n.t(self.lang_var.get(), "about.version"), style="Card.TLabel").pack(anchor="w")
+        ttk.Label(body, text=__version__, style="CardMuted.TLabel").pack(anchor="w", pady=(0, 12))
+
+        ttk.Label(body, text=i18n.t(self.lang_var.get(), "about.developer"), style="Card.TLabel").pack(anchor="w")
+        ttk.Label(body, text="Dennis Krüger", style="CardMuted.TLabel").pack(anchor="w", pady=(0, 12))
+
+        ttk.Label(body, text=i18n.t(self.lang_var.get(), "about.company"), style="Card.TLabel").pack(anchor="w")
+        ttk.Label(body, text="Krüger Digital Solutions", style="CardMuted.TLabel").pack(anchor="w")
+
+        # Karte Lizenz
+        _, body = self._card(tab, i18n.t(self.lang_var.get(), "about.license"))
+        self.license_status_label = ttk.Label(body, text="", style="CardMuted.TLabel")
+        self.license_status_label.pack(anchor="w", pady=(0, 12))
+
+        self.license_info_label = ttk.Label(body, text="", style="CardMuted.TLabel")
+        self.license_info_label.pack(anchor="w", pady=(0, 12))
+
+        ttk.Label(body, text=i18n.t(self.lang_var.get(), "about.license_key"), style="Card.TLabel").pack(anchor="w")
+        self.license_text = tk.Text(body, height=3, relief="flat", borderwidth=1,
+                                    background=theme.SURFACE, foreground=theme.TEXT,
+                                    insertbackground=theme.TEXT, font=("Courier", 9),
+                                    wrap="word", highlightthickness=0)
+        self.license_text.pack(fill="x", pady=(6, 12))
+
+        ttk.Button(body, text=i18n.t(self.lang_var.get(), "about.save_key"),
+                  command=self._on_save_license).pack(anchor="w")
+
+        # Karte Links
+        _, body = self._card(tab, i18n.t(self.lang_var.get(), "about.links"))
+        ttk.Button(body, text=i18n.t(self.lang_var.get(), "about.repo"),
+                  command=lambda: webbrowser.open("https://github.com/denniskrueger0123-star/09_Spotify-PlaylistGenerator")).pack(anchor="w", pady=(0, 8))
+        ttk.Button(body, text=i18n.t(self.lang_var.get(), "about.dashboard"),
+                  command=lambda: webbrowser.open(DASHBOARD_URL)).pack(anchor="w")
+
+        # Aktualisiere Lizenzanzeige
+        self._update_license_display()
+
+    def _render_help(self):
+        """Füllt das Hilfe-Text-Widget mit den lokalisierten Inhalten."""
+        lang = self.lang_var.get()
+        sections = i18n.HELP_SECTIONS.get(lang, [])
+
+        self.help_text.configure(state="normal")
+        self.help_text.delete("1.0", "end")
+
+        for art, text in sections:
+            if art == "li":
+                # Aufzählungszeichen voranstellen
+                self.help_text.insert("end", "•  " + text + "\n", art)
+            else:
+                self.help_text.insert("end", text + "\n", art)
+
+        self.help_text.configure(state="disabled")
+
+    def _on_language_change(self):
+        """Reagiert auf Sprachenwechsel: GUI aktualisieren."""
+        lang = self.lang_var.get()
+
+        # Hilfe neu rendern
+        self._render_help()
+
+        # Über-Reiter aktualisieren
+        self._update_license_display()
+
+        # Reiterbeschriftungen aktualisieren
+        self.notebook.tab(self.help_tab_index, text=i18n.t(lang, "tab.help"))
+        self.notebook.tab(self.about_tab_index, text=i18n.t(lang, "tab.about"))
+
+        # Sprache speichern
+        settings = load_settings(self.settings_path)
+        settings["language"] = lang
+        save_settings(settings, self.settings_path)
+
+    def _update_license_display(self):
+        """Aktualisiert die Anzeige des Lizenzstatus im Über-Reiter."""
+        lang = self.lang_var.get()
+
+        if not self.license_status:
+            return
+
+        # Statuszeile mit passender Farbe
+        status_text = ""
+        status_style = "CardMuted.TLabel"
+
+        if self.license_status.state == licensing.STATE_VALID:
+            status_text = i18n.t(lang, "license.valid")
+            status_style = "Ok.TLabel"
+        elif self.license_status.state == licensing.STATE_EXPIRED:
+            status_text = i18n.t(lang, "license.expired")
+            status_style = "Warn.TLabel"
+        elif self.license_status.state == licensing.STATE_INVALID:
+            status_text = i18n.t(lang, "license.invalid")
+            status_style = "Danger.TLabel"
+        elif self.license_status.state == licensing.STATE_CLOCK:
+            status_text = i18n.t(lang, "license.clock")
+            status_style = "Warn.TLabel"
+        elif self.license_status.state == licensing.STATE_UNCHECKED:
+            status_text = i18n.t(lang, "license.unchecked")
+            status_style = "CardMuted.TLabel"
+        else:  # STATE_MISSING
+            status_text = i18n.t(lang, "license.missing")
+            status_style = "CardMuted.TLabel"
+
+        self.license_status_label.configure(text=status_text, style=status_style)
+
+        # Lizenzinformation (Name, Gültigkeitsdauer)
+        info_text = ""
+        if self.license_status.license:
+            lic = self.license_status.license
+            info_text = i18n.t(lang, "about.licensed_to") + ": " + lic.name + "\n"
+            if lic.expires:
+                if self.license_status.days_left is not None:
+                    if self.license_status.days_left > 0:
+                        days_text = i18n.t(lang, "about.days_left").format(days=self.license_status.days_left)
+                        info_text += i18n.t(lang, "about.valid_until") + ": " + str(lic.expires) + " (" + days_text + ")"
+                    else:
+                        info_text += i18n.t(lang, "about.valid_until") + ": " + str(lic.expires)
+            else:
+                info_text += i18n.t(lang, "about.valid_until") + ": " + i18n.t(lang, "about.unlimited")
+
+        self.license_info_label.configure(text=info_text)
+
+    def _load_license_state(self):
+        """Lädt Lizenzstatus beim Start der Anwendung."""
+        state = licensing.load_state()
+        key = state.get("key")
+        last_seen_str = state.get("last_seen")
+
+        last_seen = None
+        if last_seen_str:
+            try:
+                last_seen = date.fromisoformat(last_seen_str)
+            except (ValueError, TypeError):
+                pass
+
+        self.license_status = licensing.check(key, date.today(), last_seen)
+
+        # Nur speichern, wenn bereits ein Schlüssel hinterlegt ist
+        if key:
+            licensing.save_state(key, date.today())
+
+    def _on_save_license(self):
+        """Speichert einen neuen Lizenzschlüssel."""
+        key = self.license_text.get("1.0", "end").strip()
+
+        if key:
+            licensing.save_state(key, date.today())
+
+        # Status neu laden und aktualisieren
+        self._load_license_state()
+        self._update_license_display()
+
+        # Rückmeldung
+        lang = self.lang_var.get()
+        messagebox.showinfo("Lizenzschlüssel", i18n.t(lang, "license.saved"))
 
     def _log(self, text):
         self.log_text.configure(state="normal")

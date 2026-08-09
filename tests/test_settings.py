@@ -131,3 +131,39 @@ def test_clear_settings_missing_file_no_error(tmp_path):
     path = tmp_path / "settings.json"
 
     clear_settings(path)  # Should not raise
+
+
+def test_save_and_load_language_setting(tmp_path):
+    """language setting is saved and loaded correctly."""
+    path = tmp_path / "settings.json"
+    data = {"client_id": "abc", "language": "en"}
+
+    save_settings(data, path)
+    result = load_settings(path)
+
+    assert result["language"] == "en"
+
+
+def test_invalid_language_is_rejected(tmp_path):
+    """Invalid language value is rejected when loading."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"client_id": "abc", "language": "invalid_lang"}')
+
+    result = load_settings(path)
+
+    # Invalid language should not be in result
+    assert "language" not in result
+    # But valid key should still be there
+    assert result["client_id"] == "abc"
+
+
+def test_valid_languages_are_accepted(tmp_path):
+    """Valid language values (de, en) are accepted."""
+    path = tmp_path / "settings.json"
+
+    for lang in ["de", "en"]:
+        path.write_text(f'{{"client_id": "abc", "language": "{lang}"}}')
+
+        result = load_settings(path)
+
+        assert result["language"] == lang
