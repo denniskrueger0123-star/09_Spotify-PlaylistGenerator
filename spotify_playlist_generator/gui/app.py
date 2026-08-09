@@ -23,6 +23,7 @@ from ..errors import PlaylistGeneratorError
 from ..matcher import DEFAULT_MIN_SCORE
 from ..report import write_report
 from ..settings import load_settings, save_settings
+from ..spotify_client import MAX_SEARCH_LIMIT
 from . import theme
 from . import viewmodel as vm
 from .worker import GenerationWorker
@@ -169,9 +170,10 @@ class App:
         ttk.Label(self.advanced_body, text="Treffer pro Suche", style="Card.TLabel").grid(
             row=2, column=0, sticky="w", pady=6
         )
-        ttk.Spinbox(self.advanced_body, from_=1, to=50, textvariable=self.limit_var, width=6).grid(
-            row=2, column=1, sticky="w", padx=(12, 0), pady=6
-        )
+        ttk.Spinbox(
+            self.advanced_body, from_=1, to=MAX_SEARCH_LIMIT,
+            textvariable=self.limit_var, width=6,
+        ).grid(row=2, column=1, sticky="w", padx=(12, 0), pady=6)
 
         self._on_score_change(None)
 
@@ -554,18 +556,28 @@ class App:
         self._set_status("Wird gestartet …")
 
     def _poll_worker(self):
-        """Holt Meldungen des Hintergrund-Threads und plant den nächsten Abruf."""
+        """
+        Holt Meldungen des Hintergrund-Threads und plant den nächsten Abruf.
+
+        Abgebrochen wird erst, wenn eine Abschlussmeldung angekommen ist – nicht
+        schon, wenn der Thread nicht mehr läuft. Sonst könnte eine Meldung, die
+        zwischen dem Leeren der Warteschlange und dem Thread-Ende eintrifft,
+        verloren gehen und die Oberfläche bliebe bedienungslos stehen.
+        """
+        finished = False
         for kind, payload in self.worker.poll():
             if kind == "progress":
                 self._handle_progress(payload)
             elif kind == "result":
                 self._handle_result(payload)
+                finished = True
             elif kind == "error":
                 self._handle_error(payload)
-        if self.worker.is_running():
-            self._poll_job = self.root.after(80, self._poll_worker)
-        else:
+                finished = True
+        if finished:
             self._poll_job = None
+        else:
+            self._poll_job = self.root.after(80, self._poll_worker)
 
     def _handle_progress(self, event):
         if event.kind == "auth":

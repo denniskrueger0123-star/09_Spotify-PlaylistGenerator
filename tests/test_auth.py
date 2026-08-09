@@ -358,3 +358,19 @@ def test_check_credentials_sends_timeout_and_client_id():
 
     assert session.posts[0]["kwargs"]["timeout"] is not None
     assert session.posts[0]["data"]["client_id"] == "cid"
+
+
+def test_say_reaches_console_and_notify(capsys):
+    """Statustexte der Anmeldung erreichen sowohl Konsole als auch Oberfläche."""
+    said = []
+    config = Config(
+        client_id="cid",
+        redirect_uri="http://127.0.0.1:8888/callback",
+        token_path=Path("/tmp/token.json"),
+    )
+    auth = SpotifyAuth(config, notify=said.append)
+
+    auth._say("Hallo")
+
+    assert said == ["Hallo"]
+    assert "Hallo" in capsys.readouterr().out

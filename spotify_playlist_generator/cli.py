@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         "--limit",
         type=int,
         default=10,
-        help="Maximale Anzahl Kandidaten pro Suchanfrage (default: 10)"
+        help="Maximale Anzahl Kandidaten pro Suchanfrage (default: 10, mehr lässt Spotify nicht zu)"
     )
 
     parser.add_argument(

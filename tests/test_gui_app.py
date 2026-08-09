@@ -274,6 +274,33 @@ def test_run_with_valid_input_starts_worker(app, fake_messagebox, monkeypatch, t
     assert params.playlist_name == "Meine Playlist"
 
 
+def test_poll_keeps_running_until_a_final_message_arrives(app, monkeypatch):
+    """Ein beendeter Thread darf das Abfragen nicht stoppen, solange die
+    Abschlussmeldung noch aussteht – sonst friert die Anzeige ein."""
+    monkeypatch.setattr(app.worker, "poll", lambda: [])
+    monkeypatch.setattr(app.worker, "is_running", lambda: False)
+    scheduled = []
+    monkeypatch.setattr(app.root, "after", lambda ms, fn: scheduled.append(fn) or "job")
+
+    app._poll_worker()
+
+    assert scheduled, "ohne Abschlussmeldung muss weiter abgefragt werden"
+
+
+def test_poll_stops_after_result(app, monkeypatch):
+    """Nach dem Ergebnis wird kein weiterer Abruf mehr eingeplant."""
+    result = GenerationResult(rows=[], playlist_url="")
+    monkeypatch.setattr(app.worker, "poll", lambda: [("result", result)])
+    scheduled = []
+    monkeypatch.setattr(app.root, "after", lambda ms, fn: scheduled.append(fn) or "job")
+
+    app._poll_worker()
+
+    assert scheduled == []
+    assert app._poll_job is None
+    assert str(app.run_button["state"]) == "normal"
+
+
 def test_run_without_client_id_shows_error(app, fake_messagebox, monkeypatch, tmp_path):
     """A missing client ID surfaces a ConfigError as an error dialog and switches tabs."""
     csv_path = tmp_path / "songs.csv"

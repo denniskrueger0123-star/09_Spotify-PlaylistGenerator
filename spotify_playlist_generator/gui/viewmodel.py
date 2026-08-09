@@ -8,6 +8,7 @@ from ..errors import PlaylistGeneratorError
 from ..matcher import DEFAULT_MIN_SCORE
 from ..pipeline import GenerationParams
 from ..report import ResultRow, summarize
+from ..spotify_client import MAX_SEARCH_LIMIT
 
 MARKETS = ("", "DE", "AT", "CH", "US", "GB")
 
@@ -93,7 +94,12 @@ def build_params(
     limit=10,
     dry_run=False,
 ) -> GenerationParams:
-    """Baut aus den rohen Formular-Eingaben ein GenerationParams-Objekt."""
+    """
+    Baut aus den rohen Formular-Eingaben ein GenerationParams-Objekt.
+
+    Die Trefferzahl wird auf MAX_SEARCH_LIMIT begrenzt, damit die angezeigten
+    Eingaben dem entsprechen, was Spotify tatsächlich noch annimmt.
+    """
     return GenerationParams(
         csv_path=Path(csv_text.strip()),
         playlist_name=playlist_name.strip(),
@@ -101,7 +107,7 @@ def build_params(
         public=bool(public),
         market=market.strip().upper() or None,
         min_score=round(float(min_score), 4),
-        limit=int(limit),
+        limit=max(1, min(int(limit), MAX_SEARCH_LIMIT)),
         dry_run=bool(dry_run),
     )
 

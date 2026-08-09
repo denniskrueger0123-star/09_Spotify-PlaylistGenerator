@@ -110,6 +110,10 @@ def run_generation(
         if progress is not None:
             progress(event)
 
+    def notify(text: str) -> None:
+        """Reicht Statustexte aus Anmeldung und API-Client an die Oberfläche durch."""
+        emit(ProgressEvent(kind="info", message=text))
+
     def is_cancelled() -> bool:
         return cancel is not None and cancel.is_set()
 
@@ -130,13 +134,25 @@ def run_generation(
             score=0.0,
         ))
 
-    auth = auth or SpotifyAuth(config)
+    auth = auth or SpotifyAuth(config, notify=notify)
 
     emit(ProgressEvent(kind="auth", message="Anmeldung bei Spotify …"))
     auth.get_token()
 
     token_provider = lambda: auth.get_token().access_token
-    client = client or SpotifyClient(token_provider, cancel=cancel)
+    client = client or SpotifyClient(token_provider, cancel=cancel, notify=notify)
+
+    # Eine einzige billige Anfrage vorab. Scheitert der Zugang (etwa weil dem
+    # Inhaber der Spotify-App das Premium-Abo fehlt), bricht der Lauf hier mit
+    # einer klaren Meldung ab, statt bei jedem einzelnen Song erneut zu scheitern
+    # und dabei das Kontingent aufzubrauchen.
+    emit(ProgressEvent(kind="info", message="Prüfe den Zugang zu Spotify …"))
+    try:
+        client.current_user()
+    except OperationCancelled:
+        result.cancelled = True
+        emit(ProgressEvent(kind="done"))
+        return result
 
     emit(ProgressEvent(kind="start", total=len(songs)))
 
@@ -229,13 +245,7 @@ def run_generation(
     try:
         if not params.dry_run:
             if uris_ordered:
-                user_info = client.current_user()
-                user_id = user_info.get("id")
-                if not user_id:
-                    raise SpotifyApiError("Benutzerprofil konnte nicht gelesen werden")
-
                 playlist = client.create_playlist(
-                    user_id,
                     params.playlist_name,
                     public=params.public,
                     description=params.description

@@ -71,6 +71,22 @@ def test_worker_reports_unexpected_error():
     assert "upsi" in message
 
 
+def test_worker_always_reports_something():
+    """Auch wenn der Lauf ohne Ergebnis endet, kommt genau eine Abschlussmeldung —
+    die Oberfläche wartet darauf und bliebe sonst stehen."""
+    worker = GenerationWorker()
+
+    def runner(config, params, progress, cancel):
+        return None
+
+    worker.start("config", "params", runner=runner)
+    _join(worker)
+
+    messages = worker.poll()
+    assert len(messages) == 1
+    assert messages[0][0] in ("result", "error")
+
+
 def test_worker_passes_config_and_params():
     worker = GenerationWorker()
     captured = {}
