@@ -4,8 +4,10 @@ import json
 import os
 from pathlib import Path
 
+from . import i18n
+
 DEFAULT_SETTINGS_PATH = Path.home() / ".spotify_playlist_generator" / "settings.json"
-SETTINGS_KEYS = ("client_id", "client_secret", "redirect_uri", "token_path")
+SETTINGS_KEYS = ("client_id", "client_secret", "redirect_uri", "token_path", "language")
 
 
 def load_settings(path: Path | None = None) -> dict[str, str]:
@@ -37,8 +39,12 @@ def load_settings(path: Path | None = None) -> dict[str, str]:
         if key not in data:
             continue
         value = str(data[key]).strip()
-        if value:
-            result[key] = value
+        if not value:
+            continue
+        # Sprache validieren: nur akzeptierte Werte übernehmen
+        if key == "language" and value not in i18n.LANGUAGES:
+            continue
+        result[key] = value
 
     return result
 

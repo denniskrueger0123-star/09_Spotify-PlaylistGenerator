@@ -206,6 +206,65 @@ Das Tool gibt folgende Exit-Codes zurück:
 | `2` | Abbruch durch einen Fehler: Konfiguration, CSV-Datei, Anmeldung oder Spotify-API |
 | `130` | Vom Benutzer abgebrochen (Ctrl+C) |
 
+## Lizenzschlüssel
+
+Das Programm unterstützt Lizenzschlüssel, die es Administratoren erlauben, den Zugriff
+auf einzelne Installationen zu verwalten. Die Prüfung erfolgt derzeit nur zu
+Informationszwecken — Sperren sind für zukünftige Versionen vorgesehen.
+
+### Schlüsselpaar erzeugen (Einmalig für Administratoren)
+
+Das Werkzeug `licensetool.py` erzeugt Ed25519-Schlüsselpaare:
+
+```bash
+python3 licensetool.py keygen --out kds-private.pem
+```
+
+Dies gibt den **öffentlichen Schlüssel** (als Hex-String) auf der Konsole aus.
+Diesen Wert trägt man in `spotify_playlist_generator/licensing.py` als
+`PUBLIC_KEY_HEX` ein. Der private Schlüssel (`kds-private.pem`) bleibt
+beim Administrator und wird nie ins Repository committed (`.gitignore` schützt davor).
+
+### Kundenlizenz ausstellen
+
+Mit dem privaten Schlüssel lassen sich Lizenzen ausstellen:
+
+```bash
+python3 licensetool.py issue --name "Kundenname" --until 2026-12-31 --key kds-private.pem
+```
+
+Das Resultat ist ein Schlüssel im Format `KDS1.<payload>.<signature>`.
+Dieser wird vom Kunden kopiert und im Reiter **Über** in das Feld
+„Lizenzschlüssel" eingefügt.
+
+### Lizenz prüfen
+
+```bash
+python3 licensetool.py verify "KDS1...."
+```
+
+Gibt die Gültigkeitsdaten aus.
+
+### Wichtig
+
+- Der private Schlüssel und alle `*.pem`-Dateien darf nie ins Repository gelangen.
+  Die `.gitignore` ist bereits entsprechend konfiguriert.
+- Die Prüfung ist derzeit informativ — sie zeigt Gültigkeitsstatus an,
+  sperrt aber nicht. Sperrmechanismen werden in zukünftigen Versionen ergänzt.
+
+## Hilfe und Über
+
+Die grafische Oberfläche hat zwei zusätzliche Reiter:
+
+- **Hilfe** — Umfangreiche Dokumentation in deutsch oder English, mit
+  Sprachumschalter oben rechts.
+- **Über** — Firmenlogo, Versionsnummer, Entwicklerinformation und
+  Lizenzstatus. Hier können auch Lizenzschlüssel eingefügt werden.
+
+Das Programm-Logo wird aus `assets/kds-logo.png` geladen. Ist die Datei
+nicht vorhanden, zeigt der Reiter Fallback-Text an. Die Datei ist nicht
+im Repository enthalten — sie wird vom Auftraggeber bereitgestellt.
+
 ## Tests
 
 Führe alle Tests offline aus:

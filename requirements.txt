@@ -1,2 +1,4 @@
 requests>=2.31
 pytest>=8.0
+cryptography>=42
+pillow>=10

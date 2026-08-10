@@ -1,0 +1,200 @@
+"""
+Internationalisierungs-Modul für Deutsch und Englisch.
+
+Alle Oberflächentexte und Hilfeinhalte sind hier zentralisiert.
+"""
+
+LANGUAGES = ("de", "en")
+DEFAULT_LANGUAGE = "de"
+
+
+def t(lang: str, key: str) -> str:
+    """
+    Gibt den Text für einen Schlüssel in der angeforderten Sprache zurück.
+
+    Bei unbekannter Sprache wird der deutsche Text verwendet.
+    Bei unbekanntem Schlüssel wird der Schlüssel selbst zurückgegeben,
+    damit eine Lücke sichtbar wird statt leer zu bleiben.
+    """
+    if lang not in LANGUAGES:
+        lang = "de"
+
+    if key in TEXTS.get(lang, {}):
+        return TEXTS[lang][key]
+
+    # Fallback auf Deutsch wenn Schlüssel in dieser Sprache fehlt
+    if lang != "de" and key in TEXTS.get("de", {}):
+        return TEXTS["de"][key]
+
+    # Unbekannter Schlüssel — Schlüssel selbst zurückgeben
+    return key
+
+
+# Oberflächentexte: Reiter, Beschriftungen, Statusmeldungen
+TEXTS = {
+    "de": {
+        "tab.help": "  Hilfe  ",
+        "tab.about": "  Über  ",
+        "lang.label": "Sprache",
+        "about.developer": "Entwickler",
+        "about.company": "Krüger Digital Solutions",
+        "about.company_label": "Firma",
+        "about.program": "Programm",
+        "about.version": "Version",
+        "about.license": "Lizenz",
+        "about.license_key": "Lizenzschlüssel",
+        "about.save_key": "Schlüssel speichern",
+        "about.licensed_to": "Lizenziert für",
+        "about.valid_until": "Gültig bis",
+        "about.unlimited": "unbefristet",
+        "about.days_left": "noch {days} Tage",
+        "about.links": "Links",
+        "about.repo": "Projektseite auf GitHub",
+        "about.dashboard": "Spotify Developer Dashboard",
+        "license.missing": "Kein Lizenzschlüssel hinterlegt",
+        "license.valid": "Gültig",
+        "license.expired": "Abgelaufen",
+        "license.invalid": "Ungültig – Schlüssel nicht lesbar oder verfälscht",
+        "license.unchecked": "Nicht prüfbar auf diesem Rechner – der Schlüssel selbst kann in Ordnung sein",
+        "license.clock": "Systemuhr wurde zurückgestellt",
+        "license.saved": "Lizenzschlüssel gespeichert",
+    },
+    "en": {
+        "tab.help": "  Help  ",
+        "tab.about": "  About  ",
+        "lang.label": "Language",
+        "about.developer": "Developer",
+        "about.company": "Krüger Digital Solutions",
+        "about.company_label": "Company",
+        "about.program": "Application",
+        "about.version": "Version",
+        "about.license": "License",
+        "about.license_key": "License key",
+        "about.save_key": "Save key",
+        "about.licensed_to": "Licensed to",
+        "about.valid_until": "Valid until",
+        "about.unlimited": "unlimited",
+        "about.days_left": "{days} days left",
+        "about.links": "Links",
+        "about.repo": "Project page on GitHub",
+        "about.dashboard": "Spotify Developer Dashboard",
+        "license.missing": "No license key stored",
+        "license.valid": "Valid",
+        "license.expired": "Expired",
+        "license.invalid": "Invalid – key unreadable or tampered with",
+        "license.unchecked": "Cannot be checked on this computer – the key itself may be fine",
+        "license.clock": "System clock was set back",
+        "license.saved": "License key saved",
+    },
+}
+
+# Hilfeinhalte: strukturiert als Liste von (art, text)-Tupeln
+# art: "h1", "h2", "p", "li"
+HELP_SECTIONS = {
+    "de": [
+        ("h1", "Spotify Playlist Generator"),
+        ("p", "Diese Anwendung liest eine Liste von Songs aus einer CSV-Datei, sucht jeden Titel bei Spotify und legt aus den Treffern eine Playlist in deinem Konto an."),
+        ("h1", "Einmalige Einrichtung"),
+        ("p", "Bevor die App etwas tun kann, braucht sie Zugang zu deinem Spotify-Konto. Das läuft über eine eigene Spotify-App, die du dir im Developer Dashboard anlegst."),
+        ("li", "Öffne das Spotify Developer Dashboard und lege eine neue App an."),
+        ("li", "Trage als Redirect URI genau den Wert ein, der im Reiter Einstellungen steht. Ein Zeichen Unterschied genügt, und die Anmeldung schlägt fehl."),
+        ("li", "Kopiere die Client ID aus dem Dashboard in das Feld Client ID im Reiter Einstellungen."),
+        ("li", "Trage unter User Management im Dashboard das Spotify-Konto ein, mit dem du dich anmelden willst. Ohne diesen Eintrag verweigert Spotify den Zugriff."),
+        ("li", "Der Inhaber der Spotify-App braucht ein aktives Premium-Abo. Ohne Premium antwortet Spotify auf Schreibzugriffe mit einem Fehler."),
+        ("p", "Das Client Secret bleibt leer. Diese App meldet sich über das PKCE-Verfahren an und braucht kein Secret."),
+        ("h1", "Die CSV-Datei"),
+        ("p", "Eine einfache Tabelle mit einer Zeile pro Song. Die erste Zeile enthält die Spaltennamen."),
+        ("li", "Eine Spalte für den Titel: Titel, Title, Song oder Track."),
+        ("li", "Eine Spalte für den Interpreten: Interpret, Künstler, Artist oder Band. Diese Spalte ist optional, verbessert die Treffer aber deutlich."),
+        ("p", "Ohne Interpret findet die Suche bei häufigen Titeln oft das falsche Lied. Wenn du die Wahl hast, gib den Interpreten mit an."),
+        ("h1", "Der Reiter Playlist erstellen"),
+        ("h2", "Name"),
+        ("p", "Der Name, unter dem die Playlist in deinem Spotify-Konto erscheint. Spotify erlaubt mehrere Playlists mit demselben Namen, du legst also bei jedem Lauf eine neue an."),
+        ("h2", "Beschreibung"),
+        ("p", "Ein freier Text, den Spotify unter dem Playlist-Namen anzeigt. Darf leer bleiben."),
+        ("h2", "Öffentlich sichtbar"),
+        ("p", "Ist der Haken gesetzt, taucht die Playlist in deinem öffentlichen Profil auf und andere können sie finden. Ohne Haken bleibt sie privat. Im Zweifel ohne Haken lassen."),
+        ("h2", "Trockenlauf – nichts anlegen"),
+        ("p", "Die App sucht alle Songs und zeigt das Ergebnis, legt aber keine Playlist an. Gut geeignet, um eine neue CSV-Datei zu prüfen, bevor etwas in deinem Konto landet."),
+        ("h1", "Erweiterte Einstellungen"),
+        ("h2", "Markt"),
+        ("p", "Ein Ländercode wie DE oder US. Spotify hat nicht in jedem Land dieselben Titel im Katalog, und manche Lieder erscheinen je nach Land unter anderen Fassungen."),
+        ("p", "Leer lassen bedeutet: Spotify entscheidet anhand deines Kontos. Das ist für die meisten Fälle richtig. Setze den Markt nur, wenn du gezielt den Katalog eines bestimmten Landes durchsuchen willst."),
+        ("h2", "Mindest-Score"),
+        ("p", "Für jeden gefundenen Treffer berechnet die App eine Ähnlichkeit zwischen 0 und 1: wie gut passen Titel und Interpret zu dem, was in deiner CSV-Datei steht. Liegt der beste Treffer unter diesem Wert, gilt der Song als nicht gefunden."),
+        ("p", "Der Standardwert 0,60 ist ein guter Kompromiss. Höher stellen bedeutet: weniger, aber verlässlichere Treffer. Niedriger stellen bedeutet: mehr Treffer, aber auch mehr falsche."),
+        ("p", "Wenn viele Songs als nicht gefunden gemeldet werden, obwohl es sie bei Spotify gibt, senke den Wert schrittweise auf 0,50 oder 0,45. Landen dagegen falsche Lieder in der Playlist, hebe ihn an."),
+        ("h2", "Treffer pro Suche"),
+        ("p", "Wie viele Suchergebnisse die App pro Song von Spotify anfordert und vergleicht. Mehr Treffer erhöhen die Chance, dass die passende Fassung dabei ist, machen den Lauf aber etwas langsamer."),
+        ("p", "Spotify erlaubt im Entwicklungsmodus höchstens 10. Dieser Wert ist deshalb nach oben begrenzt."),
+        ("h1", "Der Reiter Ergebnis"),
+        ("p", "Nach dem Lauf steht hier jede Zeile deiner CSV-Datei mit ihrem Ausgang."),
+        ("li", "Gefunden: Ein passender Titel wurde gefunden und in die Playlist übernommen."),
+        ("li", "Nicht gefunden: Es gab keinen Treffer über dem Mindest-Score."),
+        ("li", "Fehler: Die Zeile war unlesbar, oder Spotify hat die Anfrage abgelehnt. Der Grund steht in der Zeile."),
+        ("p", "Ein Doppelklick auf eine gefundene Zeile öffnet den Titel in Spotify. Über Report als CSV speichern legst du das gesamte Ergebnis als Tabelle ab, samt Score und Link."),
+        ("p", "Doppelte Titel landen nur einmal in der Playlist, auch wenn sie mehrfach in der CSV-Datei stehen."),
+        ("h1", "Wenn etwas schiefgeht"),
+        ("h2", "Forbidden oder 403"),
+        ("p", "Spotify verweigert den Zugriff. Drei Ursachen kommen infrage: dem Inhaber der Spotify-App fehlt das Premium-Abo, dein Konto steht nicht unter User Management im Dashboard, oder das Kontingent des Entwicklungsmodus ist aufgebraucht."),
+        ("h2", "Die Anmeldung öffnet sich nicht"),
+        ("p", "Die Adresse für die Anmeldung erscheint im Protokollfenster unten im Reiter Playlist erstellen. Öffnet sich der Browser nicht von selbst, kopiere sie von dort."),
+        ("h2", "Der Lauf hängt scheinbar"),
+        ("p", "Bei zu vielen Anfragen in kurzer Zeit bremst Spotify die App aus. Sie wartet dann und versucht es erneut. Wie lange sie wartet und der wievielte Versuch läuft, steht im Protokollfenster."),
+        ("h2", "Die Anmeldung schlägt immer fehl"),
+        ("p", "Setze im Reiter Einstellungen die Anmeldung zurück und melde dich neu an. Prüfe dabei, ob die Redirect URI im Dashboard exakt mit der in der App übereinstimmt."),
+    ],
+    "en": [
+        ("h1", "Spotify Playlist Generator"),
+        ("p", "This application reads a list of songs from a CSV file, searches for each title on Spotify and builds a playlist in your account from the matches."),
+        ("h1", "One-time setup"),
+        ("p", "Before the app can do anything, it needs access to your Spotify account. That runs through your own Spotify app, which you create in the Developer Dashboard."),
+        ("li", "Open the Spotify Developer Dashboard and create a new app."),
+        ("li", "Enter the redirect URI exactly as shown in the Settings tab. A single character of difference is enough to break the login."),
+        ("li", "Copy the Client ID from the dashboard into the Client ID field in the Settings tab."),
+        ("li", "Under User Management in the dashboard, add the Spotify account you want to log in with. Without that entry, Spotify refuses access."),
+        ("li", "The owner of the Spotify app needs an active Premium subscription. Without Premium, Spotify rejects write access."),
+        ("p", "Leave the Client Secret empty. This app signs in using the PKCE flow and needs no secret."),
+        ("h1", "The CSV file"),
+        ("p", "A plain table with one row per song. The first row holds the column names."),
+        ("li", "A column for the title: Titel, Title, Song or Track."),
+        ("li", "A column for the performer: Interpret, Künstler, Artist or Band. This column is optional, but it improves matching considerably."),
+        ("p", "Without a performer, common titles often match the wrong song. If you have the choice, include the performer."),
+        ("h1", "The Create playlist tab"),
+        ("h2", "Name"),
+        ("p", "The name the playlist will carry in your Spotify account. Spotify allows several playlists with the same name, so every run creates a new one."),
+        ("h2", "Description"),
+        ("p", "Free text that Spotify shows underneath the playlist name. May stay empty."),
+        ("h2", "Publicly visible"),
+        ("p", "When ticked, the playlist appears in your public profile and others can find it. Unticked, it stays private. When in doubt, leave it unticked."),
+        ("h2", "Dry run – create nothing"),
+        ("p", "The app searches every song and shows the outcome, but creates no playlist. Useful for checking a new CSV file before anything lands in your account."),
+        ("h1", "Advanced settings"),
+        ("h2", "Market"),
+        ("p", "A country code such as DE or US. Spotify does not carry the same catalogue in every country, and some songs appear as different editions depending on the region."),
+        ("p", "Leaving it empty means Spotify decides based on your account, which is right for most cases. Set a market only when you deliberately want to search one country's catalogue."),
+        ("h2", "Minimum score"),
+        ("p", "For every match found, the app computes a similarity between 0 and 1: how well title and performer fit what your CSV file says. If the best match falls below this value, the song counts as not found."),
+        ("p", "The default of 0.60 is a sound compromise. Raising it means fewer but more reliable matches. Lowering it means more matches, but more wrong ones too."),
+        ("p", "If many songs come back as not found although they exist on Spotify, lower the value step by step to 0.50 or 0.45. If wrong songs end up in the playlist, raise it."),
+        ("h2", "Results per search"),
+        ("p", "How many search results the app requests from Spotify per song and compares. More results raise the chance that the right edition is among them, but make the run slightly slower."),
+        ("p", "Spotify allows at most 10 in development mode, so this value is capped."),
+        ("h1", "The Results tab"),
+        ("p", "After a run, every row of your CSV file appears here with its outcome."),
+        ("li", "Found: a matching title was found and added to the playlist."),
+        ("li", "Not found: no match scored above the minimum score."),
+        ("li", "Error: the row was unreadable, or Spotify rejected the request. The reason is shown in the row."),
+        ("p", "Double-clicking a found row opens the track in Spotify. Save report as CSV writes the whole result to a table, including score and link."),
+        ("p", "Duplicate titles enter the playlist only once, even when they appear several times in the CSV file."),
+        ("h1", "When something goes wrong"),
+        ("h2", "Forbidden or 403"),
+        ("p", "Spotify is refusing access. Three causes are possible: the owner of the Spotify app has no Premium subscription, your account is not listed under User Management in the dashboard, or the development mode quota is used up."),
+        ("h2", "The login does not open"),
+        ("p", "The login address appears in the log panel at the bottom of the Create playlist tab. If the browser does not open by itself, copy it from there."),
+        ("h2", "The run appears to hang"),
+        ("p", "Too many requests in a short time make Spotify throttle the app. It then waits and tries again. How long it waits and which attempt is running are shown in the log panel."),
+        ("h2", "The login keeps failing"),
+        ("p", "Reset the login in the Settings tab and sign in again. While doing so, check that the redirect URI in the dashboard matches the one in the app exactly."),
+    ],
+}
