@@ -327,7 +327,7 @@ def test_poll_keeps_running_until_a_final_message_arrives(app, monkeypatch):
     assert scheduled, "ohne Abschlussmeldung muss weiter abgefragt werden"
 
 
-def test_poll_stops_after_result(app, monkeypatch):
+def test_poll_stops_after_result(app, monkeypatch, gueltige_lizenz):
     """Nach dem Ergebnis wird kein weiterer Abruf mehr eingeplant."""
     result = GenerationResult(rows=[], playlist_url="")
     monkeypatch.setattr(app.worker, "poll", lambda: [("result", result)])
@@ -472,12 +472,20 @@ def test_handle_result_cancelled_status(app):
     assert "Abgebrochen" in app.status_label.cget("text")
 
 
-def test_handle_error_shows_message(app, fake_messagebox):
+def test_handle_error_shows_message(app, fake_messagebox, gueltige_lizenz):
     """An error message is shown and the run button is re-enabled."""
     app._handle_error("boom")
 
     assert any(call[0] == "showerror" for call in fake_messagebox.calls)
     assert str(app.run_button.cget("state")) == "normal"
+
+
+def test_run_button_stays_disabled_after_run_without_license(app, fake_messagebox):
+    """Nach einem Lauf wird der Startknopf nur freigegeben, wenn die Lizenz das
+    zulässt - sonst stünde er nach einem Fehler wieder offen."""
+    app._handle_error("boom")
+
+    assert str(app.run_button.cget("state")) == "disabled"
 
 
 def test_cancel_sets_worker_flag(app):
@@ -674,12 +682,87 @@ def test_license_card_shows_own_message_when_not_eingerichtet(app, monkeypatch):
     assert app.license_status_label.cget("text") == i18n.TEXTS["de"]["lizenz.nicht_eingerichtet"]
 
 
-def test_menu_has_lizenz_entry_under_hilfe(app):
-    """Der Menüpunkt Lizenz … sitzt unter Hilfe, wie beauftragt."""
+def test_license_state_is_visible_before_pressing_run(app):
+    """Der Lizenzzustand steht in der Kopfzeile und im Hinweisbalken - der
+    Nutzer sieht ihn, ohne erst auf 'Playlist erstellen' zu drücken."""
     from spotify_playlist_generator import i18n
 
-    assert app.menubar.entrycget(0, "label") == i18n.TEXTS["de"]["menu.hilfe"]
-    assert app.help_menu.entrycget(0, "label") == i18n.TEXTS["de"]["menu.lizenz"]
+    assert app.license_chip.cget("text") == i18n.TEXTS["de"]["lizenz.chip.fehlt"]
+    assert app.license_banner.winfo_manager() == "pack"
+    assert app.license_banner_label.cget("text") == i18n.TEXTS["de"]["lizenz.banner.fehlt"]
+
+
+def test_run_button_disabled_without_license(app):
+    """Der Startknopf ist gesperrt, statt den Nutzer erst nach dem Klick
+    abzuweisen."""
+    assert str(app.run_button.cget("state")) == "disabled"
+
+
+def test_banner_disappears_and_button_frees_with_valid_license(app, gueltige_lizenz):
+    """Mit gültiger Lizenz verschwindet der Balken und der Knopf wird frei."""
+    app._refresh_license_display()
+
+    assert app.license_banner.winfo_manager() == ""
+    assert str(app.run_button.cget("state")) == "normal"
+
+
+def test_header_chip_warns_shortly_before_expiry(app, monkeypatch):
+    """Kurz vor Ablauf wird aus der beiläufigen Anzeige eine Warnung."""
+    import kds_lizenz
+
+    from spotify_playlist_generator import lizenz_konfig
+
+    kds_lizenz.einrichten(
+        produkt=lizenz_konfig.PRODUKT,
+        app_schluessel=b"\x66" * 32,
+        vorsilbe=lizenz_konfig.VORSILBE,
+        ordner=lizenz_konfig.ORDNER,
+    )
+    try:
+        bald = kds_lizenz.schluessel_erzeugen("Kunde", date.today() + timedelta(days=5))
+        kds_lizenz.lizenz_speichern(bald)
+
+        anzeige = app._lizenz_auskunft()
+
+        assert anzeige.farbe == "warn"
+        assert "5" in anzeige.chip
+        # Trotz Warnung bleibt der Lauf erlaubt - die Lizenz gilt ja noch.
+        assert anzeige.gesperrt is False
+    finally:
+        kds_lizenz.einrichten(
+            produkt=lizenz_konfig.PRODUKT,
+            app_schluessel=lizenz_konfig.APP_SCHLUESSEL,
+            vorsilbe=lizenz_konfig.VORSILBE,
+            ordner=lizenz_konfig.ORDNER,
+        )
+
+
+def test_banner_reappears_at_the_top_after_being_hidden(app, gueltige_lizenz):
+    """Wird der Balken aus- und wieder eingeblendet, steht er wieder oben und
+    nicht unter den Karten - ein erneutes pack() ohne before landet am Ende."""
+    app._refresh_license_display()
+    assert app.license_banner.winfo_manager() == ""
+
+    # Lizenz wieder entfernen und neu zeichnen
+    import kds_lizenz
+
+    kds_lizenz.lizenz_speichern("")
+    app._refresh_license_display()
+
+    assert app.license_banner.winfo_manager() == "pack"
+    geschwister = app.license_banner.master.pack_slaves()
+    assert geschwister.index(app.license_banner) < geschwister.index(app._run_first_card)
+
+
+def test_menu_has_lizenz_entry_at_top_level(app):
+    """Der Menüeintrag heißt Lizenz … und sitzt oberster Ebene.
+
+    Nicht unter "Hilfe": diesen Namen trägt bereits ein Reiter, in dem nichts
+    über Lizenzen steht - ein Untermenü dort schickte den Nutzer ins Leere.
+    """
+    from spotify_playlist_generator import i18n
+
+    assert app.menubar.entrycget(0, "label") == i18n.TEXTS["de"]["menu.lizenz"]
 
 
 def test_run_blocked_without_customer_license(app, fake_messagebox, monkeypatch):

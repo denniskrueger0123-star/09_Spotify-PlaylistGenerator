@@ -67,6 +67,13 @@ def apply_theme(root) -> "ttk.Style":
     style.configure("Ok.TLabel", background=SURFACE, foreground=OK, font=f["small"])
     style.configure("Warn.TLabel", background=SURFACE, foreground=WARN, font=f["small"])
     style.configure("Danger.TLabel", background=SURFACE, foreground=DANGER, font=f["small"])
+
+    # Dieselben Zustandsfarben, aber auf dem Fensterhintergrund statt auf einer
+    # Karte. Die Statusanzeige in der Kopfzeile sitzt nicht in einer Karte und
+    # bekäme mit den Karten-Stilen einen sichtbaren dunklen Kasten.
+    style.configure("OkBg.TLabel", background=BG, foreground=OK, font=f["small"])
+    style.configure("WarnBg.TLabel", background=BG, foreground=WARN, font=f["small"])
+    style.configure("DangerBg.TLabel", background=BG, foreground=DANGER, font=f["small"])
     style.configure("Value.TLabel", background=SURFACE, foreground=ACCENT, font=f["h1"])
 
     style.configure(

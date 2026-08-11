@@ -218,8 +218,31 @@ Ohne gültige Lizenz ist der gesamte Suchlauf gesperrt (auch der Trockenlauf) �
 das ist die eine Kernfunktion, für die bezahlt wird. Die App bleibt ansonsten
 bedienbar.
 
-- **Lizenz eingeben:** Menü **Hilfe → Lizenz …** öffnet den Aktivierungsdialog.
-  Alternativ ein Knopf im Reiter **Über**.
+### Wie der Zustand sichtbar wird
+
+Der Lizenzzustand steht dauerhaft **oben rechts in der Kopfzeile**, auf jedem
+Reiter — nicht erst in einer Meldung, wenn jemand auf „Playlist erstellen"
+drückt. Ist der Lauf gesperrt, steht zusätzlich ein Hinweisbalken über den
+Karten im Reiter **Playlist erstellen**, und der Startknopf ist ausgegraut.
+
+Ab dreißig Tagen vor Ablauf wechselt die Kopfzeile von „Lizenziert bis …" auf
+„Lizenz läuft in N Tagen ab", damit eine Verlängerung nicht am Ablauftag
+überrascht.
+
+### Wege zum Eingabedialog
+
+Vier, alle zum selben Dialog:
+
+- Klick auf die Zustandsanzeige **oben rechts in der Kopfzeile**
+- Knopf **Lizenz eingeben …** im Hinweisbalken (Reiter Playlist erstellen)
+- Knopf **Lizenz verwalten …** im Reiter **Über**
+- Menüeintrag **Lizenz …** in der Menüleiste
+
+Der Menüeintrag sitzt bewusst auf oberster Ebene und nicht unter „Hilfe": diesen
+Namen trägt bereits ein Reiter, in dem nichts über Lizenzen steht.
+
+### Einrichtung
+
 - **App-spezifische Daten:** stehen in `spotify_playlist_generator/lizenz_konfig.py`
   (Produktname, APPDATA-Ordner, Vorsilbe, App-Schlüssel).
 - **Schlüssel ausstellen:** geschieht zentral im KDS Lizenzmanager, nicht in
@@ -234,14 +257,14 @@ bedienbar.
 Die grafische Oberfläche hat zwei zusätzliche Reiter:
 
 - **Hilfe** — Umfangreiche Dokumentation in deutsch oder English, mit
-  Sprachumschalter oben rechts.
+  Sprachumschalter oben rechts. Enthält auch einen Abschnitt zur Lizenz.
 - **Über** — Firmenlogo, Versionsnummer, Entwicklerinformation und
-  Lizenzstatus (nur Anzeige — Lizenzschlüssel werden über Hilfe → Lizenz …
-  eingegeben).
+  Lizenzstatus, mit Knopf zum Öffnen des Lizenzdialogs.
 
-Das Programm-Logo wird aus `assets/kds-logo.png` geladen. Ist die Datei
-nicht vorhanden, zeigt der Reiter Fallback-Text an. Die Datei ist nicht
-im Repository enthalten — sie wird vom Auftraggeber bereitgestellt.
+Zwei Bilddateien werden aus `assets/` geladen: `kds-logo.png` (vollständiges
+Logo, im Reiter Über) und `kds-mark.png` (kompaktes Zeichen, in der Kopfzeile).
+Beide sind freiwillig — fehlt eine, tritt ein Ersatz an ihre Stelle und die
+Anwendung startet normal. Einzelheiten in `assets/README.md`.
 
 ## Tests
 

@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
 from pathlib import Path
+from typing import NamedTuple
 
 import queue
 import threading
@@ -37,6 +38,38 @@ DEVELOPER = "Dennis Krüger"
 COMPANY = "Krüger Digital Solutions"
 DASHBOARD_URL = "https://developer.spotify.com/dashboard"
 REPO_URL = "https://github.com/denniskrueger0123-star/09_Spotify-PlaylistGenerator"
+
+# Ab hier wird aus der beiläufigen Lizenzanzeige eine Warnung. Vier Wochen
+# reichen, um eine Verlängerung zu besorgen, ohne dass die Anzeige monatelang
+# mahnt und dabei aufhört, aufzufallen.
+LIZENZ_WARNUNG_TAGE = 30
+
+# Stilnamen je Zustandsfarbe: (Kopfzeile auf Fensterhintergrund, Karte).
+ZUSTANDSFARBEN = {
+    "ok": ("OkBg.TLabel", "Ok.TLabel"),
+    "warn": ("WarnBg.TLabel", "Warn.TLabel"),
+    "danger": ("DangerBg.TLabel", "Danger.TLabel"),
+    "muted": ("Muted.TLabel", "CardMuted.TLabel"),
+}
+
+
+class LizenzAnzeige(NamedTuple):
+    """Was die Oberfläche über den Lizenzzustand anzeigt.
+
+    chip     kurze Fassung für die Kopfzeile
+    karte    Statuszeile im Reiter Über
+    banner   Hinweis über den Karten im Reiter Playlist erstellen ("" wenn frei)
+    farbe    Schlüssel in ZUSTANDSFARBEN
+    zusatz   Kunde und Ablaufdatum, sofern eine Lizenz gelesen werden konnte
+    gesperrt True, solange der Suchlauf nicht laufen darf
+    """
+
+    chip: str
+    karte: str
+    banner: str
+    farbe: str
+    zusatz: str
+    gesperrt: bool
 
 
 class App:
@@ -76,6 +109,7 @@ class App:
             value=load_settings(settings_path).get("language", i18n.DEFAULT_LANGUAGE)
         )
         self._logo_image = None
+        self._mark_image = None
         self.license_dialog = None
 
         # Beschriftungen, die der Sprachwahl folgen: (Widget, Textschlüssel).
@@ -189,13 +223,35 @@ class App:
         header = ttk.Frame(outer, style="TFrame", padding=(24, 20, 24, 8))
         header.pack(fill="x")
 
-        titlerow = ttk.Frame(header, style="TFrame")
-        titlerow.pack(anchor="w")
-        ttk.Label(titlerow, text="●", style="H1.TLabel", foreground=theme.ACCENT).pack(side="left")
+        topline = ttk.Frame(header, style="TFrame")
+        topline.pack(fill="x")
+
+        titlerow = ttk.Frame(topline, style="TFrame")
+        titlerow.pack(side="left")
+
+        # Das kompakte Firmenzeichen steht vor dem Titel und ist damit auf jedem
+        # Reiter zu sehen, ohne Platz zu kosten. Fehlt die Datei, tritt der
+        # grüne Punkt an seine Stelle — die Kopfzeile darf nicht davon abhängen.
+        mark = branding.load_mark()
+        if mark:
+            # Die Referenz muss am Objekt hängen bleiben, sonst räumt Python das
+            # Bild weg und tkinter zeigt eine leere Fläche.
+            self._mark_image = mark
+            ttk.Label(titlerow, image=mark, style="TLabel").pack(side="left", pady=(4, 0))
+        else:
+            ttk.Label(titlerow, text="●", style="H1.TLabel", foreground=theme.ACCENT).pack(side="left")
+
         ttk.Label(titlerow, text=APP_TITLE, style="H1.TLabel").pack(side="left", padx=(10, 0))
         ttk.Label(
             titlerow, text=f"v{__version__}", style="Muted.TLabel"
         ).pack(side="left", padx=(10, 0), pady=(6, 0))
+
+        # Der Lizenzzustand steht dauerhaft in der Kopfzeile und nicht erst in
+        # einer Meldung beim Start eines Laufs. Wer keine gültige Lizenz hat,
+        # soll das sehen, bevor er seine CSV-Datei heraussucht — nicht danach.
+        self.license_chip = ttk.Label(topline, text="", style="Muted.TLabel", cursor="hand2")
+        self.license_chip.pack(side="right", pady=(8, 0))
+        self.license_chip.bind("<Button-1>", lambda _event: self._open_license_dialog())
 
         ttk.Label(
             header, text=f"{SUBTITLE}  ·  Entwickler: {DEVELOPER}", style="Muted.TLabel"
@@ -210,16 +266,22 @@ class App:
         self._build_help_tab()
         self._build_about_tab()
 
+        # Erst hier, wenn alle Anzeigestellen stehen: Kopfzeile, Banner im
+        # Reiter Playlist erstellen, Karte im Reiter Über.
+        self._refresh_license_display()
+
     def _build_menu(self):
-        """Menüleiste mit dem Eintrag Hilfe -> Lizenz …, dem Weg zum Lizenzdialog."""
+        """Menüleiste mit dem Eintrag Lizenz …, dem vierten Weg zum Lizenzdialog.
+
+        Bewusst ein Eintrag oberster Ebene und kein Untermenü unter "Hilfe":
+        die Anwendung hat bereits einen Reiter mit diesem Namen, und zwei
+        verschiedene Dinge namens "Hilfe" schicken den Nutzer an die falsche
+        Stelle — genau dorthin, wo nichts über Lizenzen steht.
+        """
         self.menubar = tk.Menu(self.root, tearoff=0)
-        self.help_menu = tk.Menu(self.menubar, tearoff=0)
-        self.help_menu.add_command(
+        self.menubar.add_command(
             label=i18n.t(self.lang_var.get(), "menu.lizenz"),
             command=self._open_license_dialog,
-        )
-        self.menubar.add_cascade(
-            label=i18n.t(self.lang_var.get(), "menu.hilfe"), menu=self.help_menu
         )
         self.root.config(menu=self.menubar)
 
@@ -227,7 +289,23 @@ class App:
         tab = ttk.Frame(self.notebook, style="TFrame", padding=16)
         self.notebook.add(tab, text="  Playlist erstellen  ")
 
-        _, body = self._card(tab, "1 · CSV-Datei")
+        # Hinweisbalken bei fehlender oder abgelaufener Lizenz. Er wird gleich
+        # hier gepackt, damit er über den Karten sitzt; _refresh_license_display
+        # blendet ihn aus, sobald eine gültige Lizenz vorliegt.
+        self.license_banner = ttk.Frame(tab, style="Card.TFrame", padding=18)
+        self.license_banner.pack(fill="x", pady=(0, 14))
+        banner_row = ttk.Frame(self.license_banner, style="Card.TFrame")
+        banner_row.pack(fill="x")
+        self.license_banner_label = ttk.Label(banner_row, text="", style="Danger.TLabel")
+        self.license_banner_label.pack(side="left")
+        self._tr(
+            ttk.Button(banner_row, command=self._open_license_dialog), "lizenz.banner.knopf"
+        ).pack(side="right")
+
+        card, body = self._card(tab, "1 · CSV-Datei")
+        # Merker für das Wiedereinblenden des Balkens an der richtigen Stelle:
+        # ein erneutes pack() ohne before würde ihn ans Ende hängen.
+        self._run_first_card = card
         row = ttk.Frame(body, style="Card.TFrame")
         row.pack(fill="x")
         ttk.Entry(row, textvariable=self.csv_var, state="readonly").pack(side="left", fill="x", expand=True)
@@ -550,8 +628,6 @@ class App:
             ttk.Button(body, command=lambda: webbrowser.open(DASHBOARD_URL)), "about.dashboard"
         ).pack(anchor="w")
 
-        # Aktualisiere Lizenzanzeige
-        self._refresh_license_display()
 
     def _render_help(self):
         """Füllt das Hilfe-Text-Widget mit den lokalisierten Inhalten."""
@@ -588,9 +664,8 @@ class App:
         self.notebook.tab(self.help_tab, text=i18n.t(lang, "tab.help"))
         self.notebook.tab(self.about_tab, text=i18n.t(lang, "tab.about"))
 
-        # Menübeschriftungen aktualisieren
-        self.menubar.entryconfigure(0, label=i18n.t(lang, "menu.hilfe"))
-        self.help_menu.entryconfigure(0, label=i18n.t(lang, "menu.lizenz"))
+        # Menübeschriftung aktualisieren
+        self.menubar.entryconfigure(0, label=i18n.t(lang, "menu.lizenz"))
 
         # Sprache speichern
         settings = load_settings(self.settings_path)
@@ -598,40 +673,100 @@ class App:
         save_settings(settings, self.settings_path)
 
     def _lizenz_auskunft(self):
-        """(Statustext, Stilname, Zusatztext) für den aktuellen Lizenzzustand.
+        """Alles, was die Oberfläche über die Lizenz anzeigen muss, an einer Stelle.
+
+        Drei Stellen zeigen denselben Zustand — die Kopfzeile, der Balken im
+        Reiter Playlist erstellen und die Karte im Reiter Über. Würde jede für
+        sich entscheiden, liefen sie früher oder später auseinander.
 
         Eine App ohne App-Schlüssel bekommt eine eigene Meldung statt der für
-        FEHLT: das ist mein Versäumnis beim Bauen, nicht das des Nutzers.
+        FEHLT: das ist ein Versäumnis beim Bauen, nicht das des Nutzers.
         """
         lang = self.lang_var.get()
+
         if not lizenz.eingerichtet():
-            return i18n.t(lang, "lizenz.nicht_eingerichtet"), "Danger.TLabel", ""
+            return LizenzAnzeige(
+                chip=i18n.t(lang, "lizenz.chip.ohne_schluessel"),
+                karte=i18n.t(lang, "lizenz.nicht_eingerichtet"),
+                banner=i18n.t(lang, "lizenz.banner.ohne_schluessel"),
+                farbe="danger",
+                zusatz="",
+                gesperrt=True,
+            )
 
         zustand, lic = lizenz.status()
+
         if zustand == lizenz.GUELTIG:
-            text = i18n.t(lang, "lizenz.status.gueltig")
-            stil = "Ok.TLabel"
+            datum = lic.ablauf.strftime("%d.%m.%Y")
+            tage = lic.tage_rest()
+            # Kurz vor Ablauf wird aus der beiläufigen Anzeige eine Warnung.
+            # Wer erst am Ablauftag davon erfährt, steht ohne Vorlauf da.
+            if tage <= LIZENZ_WARNUNG_TAGE:
+                chip = i18n.t(lang, "lizenz.chip.laeuft_ab").format(tage=tage)
+                farbe = "warn"
+            else:
+                chip = i18n.t(lang, "lizenz.chip.gueltig").format(datum=datum)
+                farbe = "ok"
+            karte = i18n.t(lang, "lizenz.status.gueltig")
+            banner = ""
+            gesperrt = False
         elif zustand == lizenz.ABGELAUFEN:
-            text = i18n.t(lang, "lizenz.status.abgelaufen").format(
-                datum=lic.ablauf.strftime("%d.%m.%Y")
-            )
-            stil = "Warn.TLabel"
+            datum = lic.ablauf.strftime("%d.%m.%Y")
+            chip = i18n.t(lang, "lizenz.chip.abgelaufen")
+            karte = i18n.t(lang, "lizenz.status.abgelaufen").format(datum=datum)
+            banner = i18n.t(lang, "lizenz.banner.abgelaufen").format(datum=datum)
+            farbe = "warn"
+            gesperrt = True
         else:  # FEHLT
-            text = i18n.t(lang, "lizenz.status.fehlt")
-            stil = "CardMuted.TLabel"
+            chip = i18n.t(lang, "lizenz.chip.fehlt")
+            karte = i18n.t(lang, "lizenz.status.fehlt")
+            banner = i18n.t(lang, "lizenz.banner.fehlt")
+            # Bewusst nicht gedämpft: eine fehlende Lizenz sperrt den Lauf, und
+            # ein grauer Hinweis in der Kopfzeile geht neben dem Titel unter.
+            farbe = "warn"
+            gesperrt = True
 
         zusatz = ""
         if lic is not None:
             zusatz = i18n.t(lang, "about.licensed_to") + ": " + lic.kunde + "\n"
             zusatz += i18n.t(lang, "about.valid_until") + ": " + lic.ablauf.strftime("%d.%m.%Y")
 
-        return text, stil, zusatz
+        return LizenzAnzeige(
+            chip=chip, karte=karte, banner=banner, farbe=farbe,
+            zusatz=zusatz, gesperrt=gesperrt,
+        )
 
     def _refresh_license_display(self):
-        """Aktualisiert die Lizenzanzeige im Über-Reiter."""
-        text, style, zusatz = self._lizenz_auskunft()
-        self.license_status_label.configure(text=text, style=style)
-        self.license_info_label.configure(text=zusatz)
+        """Zieht Kopfzeile, Hinweisbalken, Über-Karte und Startknopf nach."""
+        anzeige = self._lizenz_auskunft()
+        chip_stil, karten_stil = ZUSTANDSFARBEN[anzeige.farbe]
+
+        self.license_chip.configure(text=anzeige.chip, style=chip_stil)
+        self.license_status_label.configure(text=anzeige.karte, style=karten_stil)
+        self.license_info_label.configure(text=anzeige.zusatz)
+
+        if anzeige.gesperrt:
+            self.license_banner_label.configure(text=anzeige.banner, style=karten_stil)
+            # winfo_manager statt winfo_ismapped: in einem noch nicht
+            # dargestellten Fenster ist nichts "mapped", der Balken würde dann
+            # bei jedem Durchlauf neu gepackt.
+            if not self.license_banner.winfo_manager():
+                self.license_banner.pack(fill="x", pady=(0, 14), before=self._run_first_card)
+        else:
+            self.license_banner.pack_forget()
+
+        # Der Startknopf bleibt gesperrt, statt den Nutzer erst nach dem Klick
+        # abzuweisen. Während eines Laufs ist er ohnehin aus anderen Gründen
+        # gesperrt — dann bleibt diese Entscheidung beim Lauf.
+        if not self.worker.is_running():
+            self.run_button.configure(state="disabled" if anzeige.gesperrt else "normal")
+
+    def _dialog_status_zeigen(self, status_label, info_label):
+        """Schreibt den aktuellen Lizenzzustand in die beiden Zeilen des Dialogs."""
+        anzeige = self._lizenz_auskunft()
+        _, karten_stil = ZUSTANDSFARBEN[anzeige.farbe]
+        status_label.configure(text=anzeige.karte, style=karten_stil)
+        info_label.configure(text=anzeige.zusatz)
 
     def _open_license_dialog(self):
         """Öffnet den Lizenzdialog; ein bereits offener wird nur angehoben."""
@@ -670,9 +805,7 @@ class App:
             frame, text=i18n.t(lang, "lizenz.aktivieren"), style="Accent.TButton", command=aktivieren
         ).pack(anchor="w")
 
-        text, style, zusatz = self._lizenz_auskunft()
-        status_label.configure(text=text, style=style)
-        info_label.configure(text=zusatz)
+        self._dialog_status_zeigen(status_label, info_label)
 
     def _on_activate_license(self, eingabe, status_label, info_label):
         """Prüft und speichert einen im Lizenzdialog eingegebenen Schlüssel.
@@ -698,9 +831,7 @@ class App:
             return
 
         lizenz.lizenz_speichern(eingabe)
-        text, style, zusatz = self._lizenz_auskunft()
-        status_label.configure(text=text, style=style)
-        info_label.configure(text=zusatz)
+        self._dialog_status_zeigen(status_label, info_label)
         self._refresh_license_display()
         messagebox.showinfo(i18n.t(lang, "lizenz.dialog_titel"), i18n.t(lang, "lizenz.aktiviert"))
 
@@ -1003,7 +1134,7 @@ class App:
         self.result = result
         for key, value in result.counts.items():
             self.chip_values[key].configure(text=str(value))
-        self.run_button.configure(state="normal")
+        self._release_run_button()
         self.cancel_button.configure(state="disabled")
         if result.rows:
             self.save_report_button.configure(state="normal")
@@ -1023,8 +1154,19 @@ class App:
         if result.rows:
             self.notebook.select(self.notebook.tabs()[1])
 
+    def _release_run_button(self):
+        """Gibt den Startknopf nach einem Lauf frei — sofern die Lizenz das zulässt.
+
+        Ein schlichtes state="normal" würde eine abgelaufene Lizenz übergehen,
+        die während des Laufs abgelaufen ist oder von Anfang an fehlte, weil der
+        Lauf über einen anderen Weg angestoßen wurde.
+        """
+        self.run_button.configure(
+            state="disabled" if self._lizenz_auskunft().gesperrt else "normal"
+        )
+
     def _handle_error(self, message):
-        self.run_button.configure(state="normal")
+        self._release_run_button()
         self.cancel_button.configure(state="disabled")
         self._set_status("Abgebrochen wegen eines Fehlers.")
         self._log(message)
