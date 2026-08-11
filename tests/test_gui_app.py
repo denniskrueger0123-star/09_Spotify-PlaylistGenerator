@@ -1,6 +1,7 @@
 """Tests for the gui.app module."""
 
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -28,17 +29,18 @@ def root():
     r.destroy()
 
 
+@pytest.fixture(autouse=True)
+def appdata_umleiten(tmp_path, monkeypatch):
+    """kds_lizenz schreibt die Lizenzdatei in %APPDATA%. Ohne Umleitung läse
+    und beschriebe ein Testlauf die echte Datei im Benutzerverzeichnis."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+
+
 @pytest.fixture
 def app(root, tmp_path):
     from spotify_playlist_generator.gui.app import App
 
-    # Auch die Lizenzdatei liegt im temporären Verzeichnis. Sonst läse und
-    # beschriebe der Test die echte Datei im Benutzerverzeichnis.
-    return App(
-        root,
-        settings_path=tmp_path / "settings.json",
-        license_path=tmp_path / "license.json",
-    )
+    return App(root, settings_path=tmp_path / "settings.json")
 
 
 def test_app_builds_five_tabs(app):
@@ -239,6 +241,36 @@ def fake_messagebox(monkeypatch):
     return fake
 
 
+@pytest.fixture
+def gueltige_lizenz(appdata_umleiten):
+    """Richtet einen App-Schluessel ein und hinterlegt einen gültigen
+    Lizenzschlüssel, damit ein Test bewusst die Sperre umgeht, um ein anderes
+    Verhalten von _on_run zu prüfen. Stellt danach die echte (leere)
+    Einrichtung dieser App wieder her."""
+    import kds_lizenz
+
+    from spotify_playlist_generator import lizenz_konfig
+
+    fake_schluessel = b"\x22" * 32
+    kds_lizenz.einrichten(
+        produkt=lizenz_konfig.PRODUKT,
+        app_schluessel=fake_schluessel,
+        vorsilbe=lizenz_konfig.VORSILBE,
+        ordner=lizenz_konfig.ORDNER,
+    )
+    gueltiger_schluessel = kds_lizenz.schluessel_erzeugen(
+        "Testkunde", date.today() + timedelta(days=30)
+    )
+    kds_lizenz.lizenz_speichern(gueltiger_schluessel)
+    yield
+    kds_lizenz.einrichten(
+        produkt=lizenz_konfig.PRODUKT,
+        app_schluessel=lizenz_konfig.APP_SCHLUESSEL,
+        vorsilbe=lizenz_konfig.VORSILBE,
+        ordner=lizenz_konfig.ORDNER,
+    )
+
+
 def _make_result_row(status="found", spotify_url="https://open.spotify.com/track/abc"):
     return ResultRow(
         row=1,
@@ -253,7 +285,7 @@ def _make_result_row(status="found", spotify_url="https://open.spotify.com/track
     )
 
 
-def test_run_without_csv_warns(app, fake_messagebox, monkeypatch):
+def test_run_without_csv_warns(app, fake_messagebox, monkeypatch, gueltige_lizenz):
     """Running without CSV/name shows a warning and does not start the worker."""
     started = []
     monkeypatch.setattr(app.worker, "start", lambda *a, **kw: started.append((a, kw)))
@@ -264,7 +296,7 @@ def test_run_without_csv_warns(app, fake_messagebox, monkeypatch):
     assert started == []
 
 
-def test_run_with_valid_input_starts_worker(app, fake_messagebox, monkeypatch, tmp_path):
+def test_run_with_valid_input_starts_worker(app, fake_messagebox, monkeypatch, tmp_path, gueltige_lizenz):
     """Valid input with a client ID starts the worker exactly once."""
     csv_path = tmp_path / "songs.csv"
     csv_path.write_text("title,artist\nSong,Artist\n", encoding="utf-8")
@@ -309,7 +341,7 @@ def test_poll_stops_after_result(app, monkeypatch):
     assert str(app.run_button["state"]) == "normal"
 
 
-def test_run_without_client_id_shows_error(app, fake_messagebox, monkeypatch, tmp_path):
+def test_run_without_client_id_shows_error(app, fake_messagebox, monkeypatch, tmp_path, gueltige_lizenz):
     """A missing client ID surfaces a ConfigError as an error dialog and switches tabs."""
     csv_path = tmp_path / "songs.csv"
     csv_path.write_text("title,artist\nSong,Artist\n", encoding="utf-8")
@@ -456,7 +488,7 @@ def test_cancel_sets_worker_flag(app):
     assert str(app.cancel_button.cget("state")) == "disabled"
 
 
-def test_run_without_csv_does_not_start_worker(app, fake_messagebox, monkeypatch):
+def test_run_without_csv_does_not_start_worker(app, fake_messagebox, monkeypatch, gueltige_lizenz):
     """An invalid form must warn and never reach the worker."""
     started = []
     monkeypatch.setattr(app.worker, "start", lambda *a, **k: started.append(a))
@@ -600,12 +632,12 @@ def test_language_choice_survives_restart(root, tmp_path):
     from spotify_playlist_generator.gui.app import App
 
     settings_path = tmp_path / "settings.json"
-    first = App(root, settings_path=settings_path, license_path=tmp_path / "license.json")
+    first = App(root, settings_path=settings_path)
     first.lang_var.set("en")
     first._on_language_change()
 
     second_root = tk.Toplevel(root)
-    second = App(second_root, settings_path=settings_path, license_path=tmp_path / "license.json")
+    second = App(second_root, settings_path=settings_path)
     assert second.lang_var.get() == "en"
 
 
@@ -621,9 +653,173 @@ def test_help_text_changes_with_language(app):
     assert deutsch != englisch
 
 
-def test_license_card_shows_missing_state_at_start(app):
-    """Ohne hinterlegten Schlüssel steht die Lizenzkarte nicht leer da."""
+def test_license_card_shows_not_eingerichtet_at_start(app):
+    """Ohne App-Schlüssel (Auslieferungszustand dieses Repos) steht in der
+    Lizenzkarte die eigene Meldung dafür - nicht 'keine Lizenz hinterlegt'.
+    Das ist mein Versäumnis beim Bauen, nicht das des Nutzers."""
     from spotify_playlist_generator import i18n
 
-    assert app.license_status.state == "missing"
-    assert app.license_status_label.cget("text") == i18n.TEXTS["de"]["license.missing"]
+    assert app.license_status_label.cget("text") == i18n.TEXTS["de"]["lizenz.nicht_eingerichtet"]
+
+
+def test_menu_has_lizenz_entry_under_hilfe(app):
+    """Der Menüpunkt Lizenz … sitzt unter Hilfe, wie beauftragt."""
+    from spotify_playlist_generator import i18n
+
+    assert app.menubar.entrycget(0, "label") == i18n.TEXTS["de"]["menu.hilfe"]
+    assert app.help_menu.entrycget(0, "label") == i18n.TEXTS["de"]["menu.lizenz"]
+
+
+def test_run_blocked_without_app_schluessel(app, fake_messagebox, monkeypatch):
+    """Ohne App-Schlüssel bleibt der gesamte Suchlauf gesperrt - mit der
+    eigenen Meldung, nicht der für eine fehlende Kundenlizenz."""
+    from spotify_playlist_generator import i18n
+
+    csv_path = Path(app.csv_var.get() or "x")
+    started = []
+    monkeypatch.setattr(app.worker, "start", lambda *a, **kw: started.append((a, kw)))
+
+    app._on_run()
+
+    assert started == []
+    assert fake_messagebox.calls[0][0] == "showerror"
+    assert fake_messagebox.calls[0][2] == i18n.TEXTS["de"]["lizenz.nicht_eingerichtet"]
+
+
+def test_run_blocked_with_expired_license(app, fake_messagebox, monkeypatch, tmp_path):
+    """Ein abgelaufener Schlüssel sperrt den Suchlauf mit einer anderen
+    Meldung als eine ganz fehlende Lizenz."""
+    import kds_lizenz
+
+    from spotify_playlist_generator import i18n, lizenz_konfig
+
+    kds_lizenz.einrichten(
+        produkt=lizenz_konfig.PRODUKT,
+        app_schluessel=b"\x33" * 32,
+        vorsilbe=lizenz_konfig.VORSILBE,
+        ordner=lizenz_konfig.ORDNER,
+    )
+    try:
+        abgelaufen = kds_lizenz.schluessel_erzeugen("Kunde", date.today() - timedelta(days=1))
+        kds_lizenz.lizenz_speichern(abgelaufen)
+
+        started = []
+        monkeypatch.setattr(app.worker, "start", lambda *a, **kw: started.append((a, kw)))
+
+        app._on_run()
+
+        assert started == []
+        title, message = fake_messagebox.calls[0][1], fake_messagebox.calls[0][2]
+        assert i18n.TEXTS["de"]["lizenz.nicht_eingerichtet"] not in message
+    finally:
+        kds_lizenz.einrichten(
+            produkt=lizenz_konfig.PRODUKT,
+            app_schluessel=lizenz_konfig.APP_SCHLUESSEL,
+            vorsilbe=lizenz_konfig.VORSILBE,
+            ordner=lizenz_konfig.ORDNER,
+        )
+
+
+def test_run_allowed_with_valid_license(app, fake_messagebox, monkeypatch, tmp_path, gueltige_lizenz):
+    """Mit einer gültigen Lizenz läuft der Suchlauf ganz normal an - die
+    Sperre greift nur, wenn sie soll."""
+    csv_path = tmp_path / "songs.csv"
+    csv_path.write_text("title,artist\nSong,Artist\n", encoding="utf-8")
+    app.csv_var.set(str(csv_path))
+    app.name_var.set("Meine Playlist")
+    app.client_id_var.set("client-123")
+
+    calls = []
+    monkeypatch.setattr(app.worker, "start", lambda config, params, **kw: calls.append((config, params)))
+
+    app._on_run()
+
+    assert len(calls) == 1
+
+
+def test_dialog_reused_not_duplicated(app):
+    """Ein zweites Öffnen hebt den bestehenden Dialog an statt einen neuen zu bauen."""
+    app._open_license_dialog()
+    erster = app.license_dialog
+    app._open_license_dialog()
+    assert app.license_dialog is erster
+
+
+def test_activate_garbage_key_shows_warning_never_crashes(app, fake_messagebox):
+    """Müll im Eingabefeld führt zu einer Warnung, nie zu einer Ausnahme."""
+    from tkinter import ttk
+
+    status_label = ttk.Label(app.root)
+    info_label = ttk.Label(app.root)
+
+    app._on_activate_license("###👾 kein Schlüssel 5000" + "x" * 500, status_label, info_label)
+
+    assert any(call[0] == "showwarning" for call in fake_messagebox.calls)
+
+
+def test_activate_expired_key_not_saved(app, fake_messagebox, tmp_path):
+    """Ein abgelaufener Schlüssel wird beim Aktivieren abgelehnt und nicht
+    gespeichert - er überschreibt keinen vorhandenen gültigen Schlüssel."""
+    import kds_lizenz
+
+    from tkinter import ttk
+
+    from spotify_playlist_generator import lizenz_konfig
+
+    kds_lizenz.einrichten(
+        produkt=lizenz_konfig.PRODUKT,
+        app_schluessel=b"\x44" * 32,
+        vorsilbe=lizenz_konfig.VORSILBE,
+        ordner=lizenz_konfig.ORDNER,
+    )
+    try:
+        abgelaufen = kds_lizenz.schluessel_erzeugen("Kunde", date.today() - timedelta(days=1))
+        status_label = ttk.Label(app.root)
+        info_label = ttk.Label(app.root)
+
+        app._on_activate_license(abgelaufen, status_label, info_label)
+
+        assert any(call[0] == "showwarning" for call in fake_messagebox.calls)
+        zustand, lic = kds_lizenz.status()
+        assert zustand == "fehlt"
+    finally:
+        kds_lizenz.einrichten(
+            produkt=lizenz_konfig.PRODUKT,
+            app_schluessel=lizenz_konfig.APP_SCHLUESSEL,
+            vorsilbe=lizenz_konfig.VORSILBE,
+            ordner=lizenz_konfig.ORDNER,
+        )
+
+
+def test_activate_valid_key_saves_and_refreshes_display(app, fake_messagebox, tmp_path):
+    """Ein gültiger Schlüssel wird gespeichert, und die Über-Karte zeigt sofort
+    den neuen Zustand."""
+    import kds_lizenz
+
+    from tkinter import ttk
+
+    from spotify_playlist_generator import i18n, lizenz_konfig
+
+    kds_lizenz.einrichten(
+        produkt=lizenz_konfig.PRODUKT,
+        app_schluessel=b"\x55" * 32,
+        vorsilbe=lizenz_konfig.VORSILBE,
+        ordner=lizenz_konfig.ORDNER,
+    )
+    try:
+        gueltig = kds_lizenz.schluessel_erzeugen("Frau Beispiel", date.today() + timedelta(days=10))
+        status_label = ttk.Label(app.root)
+        info_label = ttk.Label(app.root)
+
+        app._on_activate_license(gueltig, status_label, info_label)
+
+        assert any(call[0] == "showinfo" for call in fake_messagebox.calls)
+        assert app.license_status_label.cget("text") == i18n.TEXTS["de"]["lizenz.status.gueltig"]
+        assert "Frau Beispiel" in app.license_info_label.cget("text")
+    finally:
+        kds_lizenz.einrichten(
+            produkt=lizenz_konfig.PRODUKT,
+            app_schluessel=lizenz_konfig.APP_SCHLUESSEL,
+            vorsilbe=lizenz_konfig.VORSILBE,
+            ordner=lizenz_konfig.ORDNER,
+        )
