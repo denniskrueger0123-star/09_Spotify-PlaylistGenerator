@@ -50,15 +50,50 @@ def test_produktname_ist_buchstabengenau():
     """Der Produktname geht in die App-Schluessel-Berechnung ein - er darf sich
     nicht mehr aendern, ohne alle ausgestellten Lizenzen zu entwerten."""
     assert lizenz_konfig.PRODUKT == "Spotify Playlist Generator"
-    assert lizenz_konfig.ORDNER == "SpotifyPlaylistGenerator"
+    assert lizenz_konfig.ORDNER == "Spotify-Playlist-Generator"
     assert lizenz_konfig.VORSILBE == "KDS"
 
 
-def test_ausgelieferter_app_schluessel_ist_leer():
-    """Solange kein App-Schluessel eingetragen ist, bleibt die App gesperrt."""
-    assert lizenz_konfig.APP_SCHLUESSEL == ""
-    assert lizenz.eingerichtet() is False
+def test_ausgelieferter_app_schluessel_ist_gesetzt():
+    """Der App-Schluessel aus dem KDS Lizenzmanager ist eingetragen: 32 Byte
+    als Hex-Zeichenkette, die App ist eingerichtet. Der genaue Wert wird hier
+    bewusst nicht geprueft - er kommt aus dem Hauptschluessel des
+    Lizenzmanagers und ist von hier aus nicht nachrechenbar."""
+    assert lizenz_konfig.APP_SCHLUESSEL != ""
+    assert len(lizenz_konfig.APP_SCHLUESSEL) == 64
+    assert all(c in "0123456789abcdefABCDEF" for c in lizenz_konfig.APP_SCHLUESSEL)
+    assert lizenz.eingerichtet() is True
+
+
+def test_frische_installation_ohne_kundenschluessel_ist_fehlt():
+    """Direkt nach der Installation, bevor ein Kunde einen Schluessel
+    eingegeben hat, ist der Zustand FEHLT - nicht die Bau-Meldung, denn die
+    App IST eingerichtet."""
     assert lizenz.status() == (lizenz.FEHLT, None)
+
+
+def test_ohne_app_schluessel_bleibt_app_gesperrt(monkeypatch):
+    """Verteidigend: eine (hypothetisch) ohne App-Schluessel gebaute Fassung
+    bleibt gesperrt und weist jeden Schluessel ab - dieser Pfad bleibt auch
+    bestehen, nachdem der echte Schluessel eingetragen wurde."""
+    import kds_lizenz
+
+    kds_lizenz.einrichten(
+        produkt=lizenz_konfig.PRODUKT,
+        app_schluessel="",
+        vorsilbe=lizenz_konfig.VORSILBE,
+        ordner=lizenz_konfig.ORDNER,
+    )
+    try:
+        assert lizenz.eingerichtet() is False
+        assert lizenz.status() == (lizenz.FEHLT, None)
+    finally:
+        kds_lizenz.einrichten(
+            produkt=lizenz_konfig.PRODUKT,
+            app_schluessel=lizenz_konfig.APP_SCHLUESSEL,
+            vorsilbe=lizenz_konfig.VORSILBE,
+            ordner=lizenz_konfig.ORDNER,
+        )
 
 
 def test_erzeugter_schluessel_wird_wieder_angenommen(eingerichtet_mit_fake_schluessel):

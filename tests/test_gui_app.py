@@ -653,11 +653,23 @@ def test_help_text_changes_with_language(app):
     assert deutsch != englisch
 
 
-def test_license_card_shows_not_eingerichtet_at_start(app):
-    """Ohne App-Schlüssel (Auslieferungszustand dieses Repos) steht in der
-    Lizenzkarte die eigene Meldung dafür - nicht 'keine Lizenz hinterlegt'.
-    Das ist mein Versäumnis beim Bauen, nicht das des Nutzers."""
+def test_license_card_shows_fehlt_at_start(app):
+    """Frisch installiert, noch kein Kundenschlüssel eingegeben: die
+    Lizenzkarte zeigt 'Keine Lizenz hinterlegt' - der App-Schlüssel selbst
+    ist ja gesetzt, die App also eingerichtet."""
     from spotify_playlist_generator import i18n
+
+    assert app.license_status_label.cget("text") == i18n.TEXTS["de"]["lizenz.status.fehlt"]
+
+
+def test_license_card_shows_own_message_when_not_eingerichtet(app, monkeypatch):
+    """Verteidigend: eine (hypothetisch) ohne App-Schlüssel gebaute Fassung
+    zeigt ihre eigene Meldung - nicht 'keine Lizenz hinterlegt'. Das ist ein
+    Versäumnis beim Bauen, nicht das des Nutzers."""
+    from spotify_playlist_generator import i18n, lizenz
+
+    monkeypatch.setattr(lizenz, "eingerichtet", lambda: False)
+    app._refresh_license_display()
 
     assert app.license_status_label.cget("text") == i18n.TEXTS["de"]["lizenz.nicht_eingerichtet"]
 
@@ -670,12 +682,24 @@ def test_menu_has_lizenz_entry_under_hilfe(app):
     assert app.help_menu.entrycget(0, "label") == i18n.TEXTS["de"]["menu.lizenz"]
 
 
-def test_run_blocked_without_app_schluessel(app, fake_messagebox, monkeypatch):
-    """Ohne App-Schlüssel bleibt der gesamte Suchlauf gesperrt - mit der
-    eigenen Meldung, nicht der für eine fehlende Kundenlizenz."""
-    from spotify_playlist_generator import i18n
+def test_run_blocked_without_customer_license(app, fake_messagebox, monkeypatch):
+    """Frisch installiert, noch kein Kundenschlüssel eingegeben: der gesamte
+    Suchlauf bleibt gesperrt."""
+    started = []
+    monkeypatch.setattr(app.worker, "start", lambda *a, **kw: started.append((a, kw)))
 
-    csv_path = Path(app.csv_var.get() or "x")
+    app._on_run()
+
+    assert started == []
+    assert fake_messagebox.calls[0][0] == "showwarning"
+
+
+def test_run_blocked_when_not_eingerichtet(app, fake_messagebox, monkeypatch):
+    """Verteidigend: ohne App-Schlüssel bleibt der Suchlauf gesperrt - mit der
+    eigenen Meldung, nicht der für eine fehlende Kundenlizenz."""
+    from spotify_playlist_generator import i18n, lizenz
+
+    monkeypatch.setattr(lizenz, "eingerichtet", lambda: False)
     started = []
     monkeypatch.setattr(app.worker, "start", lambda *a, **kw: started.append((a, kw)))
 
