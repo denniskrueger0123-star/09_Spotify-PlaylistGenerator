@@ -208,49 +208,26 @@ Das Tool gibt folgende Exit-Codes zurück:
 
 ## Lizenzschlüssel
 
-Das Programm unterstützt Lizenzschlüssel, die es Administratoren erlauben, den Zugriff
-auf einzelne Installationen zu verwalten. Die Prüfung erfolgt derzeit nur zu
-Informationszwecken — Sperren sind für zukünftige Versionen vorgesehen.
+Die App prüft ihre Lizenz offline über den geteilten KDS-Lizenzmechanismus
+(`kds_lizenz/`, identisch in allen Apps von Krüger Digital Solutions). Es gibt
+keinen Server und keinen Netzzugang für die Prüfung — Ablaufdatum und
+Kundenname stecken im Schlüssel selbst, eine Unterschrift darüber beweist
+ihre Echtheit.
 
-### Schlüsselpaar erzeugen (Einmalig für Administratoren)
+Ohne gültige Lizenz ist der gesamte Suchlauf gesperrt (auch der Trockenlauf) —
+das ist die eine Kernfunktion, für die bezahlt wird. Die App bleibt ansonsten
+bedienbar.
 
-Das Werkzeug `licensetool.py` erzeugt Ed25519-Schlüsselpaare:
-
-```bash
-python3 licensetool.py keygen --out kds-private.pem
-```
-
-Dies gibt den **öffentlichen Schlüssel** (als Hex-String) auf der Konsole aus.
-Diesen Wert trägt man in `spotify_playlist_generator/licensing.py` als
-`PUBLIC_KEY_HEX` ein. Der private Schlüssel (`kds-private.pem`) bleibt
-beim Administrator und wird nie ins Repository committed (`.gitignore` schützt davor).
-
-### Kundenlizenz ausstellen
-
-Mit dem privaten Schlüssel lassen sich Lizenzen ausstellen:
-
-```bash
-python3 licensetool.py issue --name "Kundenname" --until 2026-12-31 --key kds-private.pem
-```
-
-Das Resultat ist ein Schlüssel im Format `KDS1.<payload>.<signature>`.
-Dieser wird vom Kunden kopiert und im Reiter **Über** in das Feld
-„Lizenzschlüssel" eingefügt.
-
-### Lizenz prüfen
-
-```bash
-python3 licensetool.py verify "KDS1...."
-```
-
-Gibt die Gültigkeitsdaten aus.
-
-### Wichtig
-
-- Der private Schlüssel und alle `*.pem`-Dateien darf nie ins Repository gelangen.
-  Die `.gitignore` ist bereits entsprechend konfiguriert.
-- Die Prüfung ist derzeit informativ — sie zeigt Gültigkeitsstatus an,
-  sperrt aber nicht. Sperrmechanismen werden in zukünftigen Versionen ergänzt.
+- **Lizenz eingeben:** Menü **Hilfe → Lizenz …** öffnet den Aktivierungsdialog.
+  Alternativ ein Knopf im Reiter **Über**.
+- **App-spezifische Daten:** stehen in `spotify_playlist_generator/lizenz_konfig.py`
+  (Produktname, APPDATA-Ordner, Vorsilbe, App-Schlüssel).
+- **Schlüssel ausstellen:** geschieht zentral im KDS Lizenzmanager, nicht in
+  diesem Repository. Der App-Schlüssel dieses Produkts wird dort einmalig in
+  `APP_SCHLUESSEL` in `lizenz_konfig.py` eingetragen.
+- **Solange `APP_SCHLUESSEL` leer ist:** ist die App absichtlich für jeden
+  Schlüssel gesperrt und zeigt eine eigene Meldung dafür — eine ohne
+  App-Schlüssel gebaute Auslieferung soll unbrauchbar sein, nicht unbewacht.
 
 ## Hilfe und Über
 
@@ -259,7 +236,8 @@ Die grafische Oberfläche hat zwei zusätzliche Reiter:
 - **Hilfe** — Umfangreiche Dokumentation in deutsch oder English, mit
   Sprachumschalter oben rechts.
 - **Über** — Firmenlogo, Versionsnummer, Entwicklerinformation und
-  Lizenzstatus. Hier können auch Lizenzschlüssel eingefügt werden.
+  Lizenzstatus (nur Anzeige — Lizenzschlüssel werden über Hilfe → Lizenz …
+  eingegeben).
 
 Das Programm-Logo wird aus `assets/kds-logo.png` geladen. Ist die Datei
 nicht vorhanden, zeigt der Reiter Fallback-Text an. Die Datei ist nicht

@@ -4,14 +4,13 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
 from pathlib import Path
-from datetime import date
 
 import queue
 import threading
 
 from .. import __version__
 from .. import i18n
-from .. import licensing
+from .. import lizenz
 from ..auth import (
     CHECK_INVALID,
     CHECK_OK,
@@ -43,12 +42,9 @@ REPO_URL = "https://github.com/denniskrueger0123-star/09_Spotify-PlaylistGenerat
 class App:
     """Hauptfenster der Anwendung mit den drei Reitern."""
 
-    def __init__(self, root, settings_path=None, license_path=None):
+    def __init__(self, root, settings_path=None):
         self.root = root
         self.settings_path = settings_path
-        # Eigener Pfad für die Lizenzdatei, damit Tests nicht in das echte
-        # Benutzerverzeichnis schreiben. None bedeutet: Vorgabe verwenden.
-        self.license_path = license_path
         self.style = theme.apply_theme(root)
 
         root.title(f"{APP_TITLE} — v{__version__}")
@@ -80,7 +76,7 @@ class App:
             value=load_settings(settings_path).get("language", i18n.DEFAULT_LANGUAGE)
         )
         self._logo_image = None
-        self.license_status = None
+        self.license_dialog = None
 
         # Beschriftungen, die der Sprachwahl folgen: (Widget, Textschlüssel).
         # Ohne diese Liste müsste jede einzelne Stelle beim Umschalten von Hand
@@ -91,11 +87,8 @@ class App:
         self._poll_job = None
         self._check_queue = queue.Queue()
 
-        # Der Lizenzstatus steht vor dem Aufbau fest, damit die Lizenzkarte schon
-        # beim ersten Anzeigen ausgefüllt ist statt leer zu bleiben.
-        self._load_license_state()
-
         self._build()
+        self._build_menu()
         self._load_settings_into_form()
 
     def _card(self, parent, title):
@@ -216,6 +209,19 @@ class App:
         self._build_settings_tab()
         self._build_help_tab()
         self._build_about_tab()
+
+    def _build_menu(self):
+        """Menüleiste mit dem Eintrag Hilfe -> Lizenz …, dem Weg zum Lizenzdialog."""
+        self.menubar = tk.Menu(self.root, tearoff=0)
+        self.help_menu = tk.Menu(self.menubar, tearoff=0)
+        self.help_menu.add_command(
+            label=i18n.t(self.lang_var.get(), "menu.lizenz"),
+            command=self._open_license_dialog,
+        )
+        self.menubar.add_cascade(
+            label=i18n.t(self.lang_var.get(), "menu.hilfe"), menu=self.help_menu
+        )
+        self.root.config(menu=self.menubar)
 
     def _build_run_tab(self):
         tab = ttk.Frame(self.notebook, style="TFrame", padding=16)
@@ -522,7 +528,8 @@ class App:
         self._tr(ttk.Label(body, style="Card.TLabel"), "about.company_label").pack(anchor="w")
         ttk.Label(body, text=COMPANY, style="CardMuted.TLabel").pack(anchor="w")
 
-        # Karte Lizenz
+        # Karte Lizenz. Nur Anzeige — die Eingabe passiert im Lizenzdialog
+        # (Menü Hilfe -> Lizenz …), damit es genau eine Stelle zum Aktivieren gibt.
         _, body = self._card_tr(tab, "about.license")
         self.license_status_label = ttk.Label(body, text="", style="CardMuted.TLabel")
         self.license_status_label.pack(anchor="w", pady=(0, 12))
@@ -530,20 +537,9 @@ class App:
         self.license_info_label = ttk.Label(body, text="", style="CardMuted.TLabel")
         self.license_info_label.pack(anchor="w", pady=(0, 12))
 
-        self._tr(ttk.Label(body, style="Card.TLabel"), "about.license_key").pack(anchor="w")
-        self.license_text = tk.Text(body, height=3, relief="flat", borderwidth=1,
-                                    background=theme.SURFACE, foreground=theme.TEXT,
-                                    insertbackground=theme.TEXT, font=theme.fonts()["mono"],
-                                    wrap="char", highlightthickness=0)
-        self.license_text.pack(fill="x", pady=(6, 12))
-
-        # Einen bereits hinterlegten Schlüssel anzeigen. Sonst steht das Feld leer da
-        # und der Kunde kann nicht nachsehen, welcher Schlüssel gespeichert ist.
-        gespeichert = licensing.load_state(self.license_path).get("key", "")
-        if gespeichert:
-            self.license_text.insert("1.0", gespeichert)
-
-        self._tr(ttk.Button(body, command=self._on_save_license), "about.save_key").pack(anchor="w")
+        self._tr(
+            ttk.Button(body, command=self._open_license_dialog), "lizenz.verwalten"
+        ).pack(anchor="w")
 
         # Karte Links
         _, body = self._card_tr(tab, "about.links")
@@ -555,7 +551,7 @@ class App:
         ).pack(anchor="w")
 
         # Aktualisiere Lizenzanzeige
-        self._update_license_display()
+        self._refresh_license_display()
 
     def _render_help(self):
         """Füllt das Hilfe-Text-Widget mit den lokalisierten Inhalten."""
@@ -586,99 +582,127 @@ class App:
             widget.configure(text=i18n.t(lang, key))
 
         # Über-Reiter aktualisieren
-        self._update_license_display()
+        self._refresh_license_display()
 
         # Reiterbeschriftungen aktualisieren
         self.notebook.tab(self.help_tab, text=i18n.t(lang, "tab.help"))
         self.notebook.tab(self.about_tab, text=i18n.t(lang, "tab.about"))
+
+        # Menübeschriftungen aktualisieren
+        self.menubar.entryconfigure(0, label=i18n.t(lang, "menu.hilfe"))
+        self.help_menu.entryconfigure(0, label=i18n.t(lang, "menu.lizenz"))
 
         # Sprache speichern
         settings = load_settings(self.settings_path)
         settings["language"] = lang
         save_settings(settings, self.settings_path)
 
-    def _update_license_display(self):
-        """Aktualisiert die Anzeige des Lizenzstatus im Über-Reiter."""
-        lang = self.lang_var.get()
+    def _lizenz_auskunft(self):
+        """(Statustext, Stilname, Zusatztext) für den aktuellen Lizenzzustand.
 
-        if not self.license_status:
+        Eine App ohne App-Schlüssel bekommt eine eigene Meldung statt der für
+        FEHLT: das ist mein Versäumnis beim Bauen, nicht das des Nutzers.
+        """
+        lang = self.lang_var.get()
+        if not lizenz.eingerichtet():
+            return i18n.t(lang, "lizenz.nicht_eingerichtet"), "Danger.TLabel", ""
+
+        zustand, lic = lizenz.status()
+        if zustand == lizenz.GUELTIG:
+            text = i18n.t(lang, "lizenz.status.gueltig")
+            stil = "Ok.TLabel"
+        elif zustand == lizenz.ABGELAUFEN:
+            text = i18n.t(lang, "lizenz.status.abgelaufen").format(
+                datum=lic.ablauf.strftime("%d.%m.%Y")
+            )
+            stil = "Warn.TLabel"
+        else:  # FEHLT
+            text = i18n.t(lang, "lizenz.status.fehlt")
+            stil = "CardMuted.TLabel"
+
+        zusatz = ""
+        if lic is not None:
+            zusatz = i18n.t(lang, "about.licensed_to") + ": " + lic.kunde + "\n"
+            zusatz += i18n.t(lang, "about.valid_until") + ": " + lic.ablauf.strftime("%d.%m.%Y")
+
+        return text, stil, zusatz
+
+    def _refresh_license_display(self):
+        """Aktualisiert die Lizenzanzeige im Über-Reiter."""
+        text, style, zusatz = self._lizenz_auskunft()
+        self.license_status_label.configure(text=text, style=style)
+        self.license_info_label.configure(text=zusatz)
+
+    def _open_license_dialog(self):
+        """Öffnet den Lizenzdialog; ein bereits offener wird nur angehoben."""
+        if self.license_dialog is not None and self.license_dialog.winfo_exists():
+            self.license_dialog.lift()
+            self.license_dialog.focus_force()
             return
 
-        # Statuszeile mit passender Farbe
-        status_text = ""
-        status_style = "CardMuted.TLabel"
-
-        if self.license_status.state == licensing.STATE_VALID:
-            status_text = i18n.t(lang, "license.valid")
-            status_style = "Ok.TLabel"
-        elif self.license_status.state == licensing.STATE_EXPIRED:
-            status_text = i18n.t(lang, "license.expired")
-            status_style = "Warn.TLabel"
-        elif self.license_status.state == licensing.STATE_INVALID:
-            status_text = i18n.t(lang, "license.invalid")
-            status_style = "Danger.TLabel"
-        elif self.license_status.state == licensing.STATE_CLOCK:
-            status_text = i18n.t(lang, "license.clock")
-            status_style = "Warn.TLabel"
-        elif self.license_status.state == licensing.STATE_UNCHECKED:
-            status_text = i18n.t(lang, "license.unchecked")
-            status_style = "CardMuted.TLabel"
-        else:  # STATE_MISSING
-            status_text = i18n.t(lang, "license.missing")
-            status_style = "CardMuted.TLabel"
-
-        self.license_status_label.configure(text=status_text, style=status_style)
-
-        # Lizenzinformation (Name, Gültigkeitsdauer)
-        info_text = ""
-        if self.license_status.license:
-            lic = self.license_status.license
-            info_text = i18n.t(lang, "about.licensed_to") + ": " + lic.name + "\n"
-            if lic.expires:
-                if self.license_status.days_left is not None:
-                    if self.license_status.days_left > 0:
-                        days_text = i18n.t(lang, "about.days_left").format(days=self.license_status.days_left)
-                        info_text += i18n.t(lang, "about.valid_until") + ": " + str(lic.expires) + " (" + days_text + ")"
-                    else:
-                        info_text += i18n.t(lang, "about.valid_until") + ": " + str(lic.expires)
-            else:
-                info_text += i18n.t(lang, "about.valid_until") + ": " + i18n.t(lang, "about.unlimited")
-
-        self.license_info_label.configure(text=info_text)
-
-    def _load_license_state(self):
-        """Lädt Lizenzstatus beim Start der Anwendung."""
-        state = licensing.load_state(self.license_path)
-        key = state.get("key")
-        last_seen_str = state.get("last_seen")
-
-        last_seen = None
-        if last_seen_str:
-            try:
-                last_seen = date.fromisoformat(last_seen_str)
-            except (ValueError, TypeError):
-                pass
-
-        self.license_status = licensing.check(key, date.today(), last_seen)
-
-        # Nur speichern, wenn bereits ein Schlüssel hinterlegt ist
-        if key:
-            licensing.save_state(key, date.today(), self.license_path)
-
-    def _on_save_license(self):
-        """Speichert einen neuen Lizenzschlüssel."""
-        key = self.license_text.get("1.0", "end").strip()
-
-        if key:
-            licensing.save_state(key, date.today(), self.license_path)
-
-        # Status neu laden und aktualisieren
-        self._load_license_state()
-        self._update_license_display()
-
-        # Rückmeldung
         lang = self.lang_var.get()
-        messagebox.showinfo("Lizenzschlüssel", i18n.t(lang, "license.saved"))
+        dialog = tk.Toplevel(self.root)
+        dialog.title(i18n.t(lang, "lizenz.dialog_titel"))
+        dialog.configure(background=theme.BG)
+        dialog.geometry("480x280")
+        dialog.transient(self.root)
+        self.license_dialog = dialog
+
+        frame = ttk.Frame(dialog, style="TFrame", padding=18)
+        frame.pack(fill="both", expand=True)
+
+        status_label = ttk.Label(frame, text="", style="CardMuted.TLabel")
+        status_label.pack(anchor="w", pady=(0, 12))
+        info_label = ttk.Label(frame, text="", style="CardMuted.TLabel")
+        info_label.pack(anchor="w", pady=(0, 12))
+
+        ttk.Label(frame, text=i18n.t(lang, "lizenz.eingabefeld"), style="Card.TLabel").pack(anchor="w")
+        entry = tk.Text(frame, height=4, relief="flat", borderwidth=1,
+                         background=theme.SURFACE, foreground=theme.TEXT,
+                         insertbackground=theme.TEXT, font=theme.fonts()["mono"],
+                         wrap="char", highlightthickness=0)
+        entry.pack(fill="x", pady=(6, 12))
+
+        def aktivieren():
+            self._on_activate_license(entry.get("1.0", "end"), status_label, info_label)
+
+        ttk.Button(
+            frame, text=i18n.t(lang, "lizenz.aktivieren"), style="Accent.TButton", command=aktivieren
+        ).pack(anchor="w")
+
+        text, style, zusatz = self._lizenz_auskunft()
+        status_label.configure(text=text, style=style)
+        info_label.configure(text=zusatz)
+
+    def _on_activate_license(self, eingabe, status_label, info_label):
+        """Prüft und speichert einen im Lizenzdialog eingegebenen Schlüssel.
+
+        Ein abgelaufener Schlüssel wird nicht gespeichert - sonst überschreibt
+        ein Kunde beim Ausprobieren seinen noch gültigen Schlüssel.
+        schluessel_pruefen meldet jeden Fehler als None statt als Ausnahme;
+        darauf verlässt sich diese Methode und fängt nichts zusätzlich ab.
+        """
+        lang = self.lang_var.get()
+        lic = lizenz.schluessel_pruefen(eingabe)
+
+        if lic is None:
+            messagebox.showwarning(
+                i18n.t(lang, "lizenz.dialog_titel"), i18n.t(lang, "lizenz.abgelehnt_ungueltig")
+            )
+            return
+
+        if lic.abgelaufen():
+            messagebox.showwarning(
+                i18n.t(lang, "lizenz.dialog_titel"), i18n.t(lang, "lizenz.abgelehnt_abgelaufen")
+            )
+            return
+
+        lizenz.lizenz_speichern(eingabe)
+        text, style, zusatz = self._lizenz_auskunft()
+        status_label.configure(text=text, style=style)
+        info_label.configure(text=zusatz)
+        self._refresh_license_display()
+        messagebox.showinfo(i18n.t(lang, "lizenz.dialog_titel"), i18n.t(lang, "lizenz.aktiviert"))
 
     def _log(self, text):
         self.log_text.configure(state="normal")
@@ -850,9 +874,43 @@ class App:
             )
         return load_config(settings_path=self.settings_path)
 
+    def _lizenz_pruefen_fuer_lauf(self):
+        """Prüft vor einem Suchlauf, ob eine gültige Lizenz vorliegt.
+
+        Gesperrt wird der gesamte Suchlauf, auch der Trockenlauf - er ist die
+        eine Kernfunktion, für die bezahlt wird. Eine App ohne App-Schlüssel
+        bekommt eine eigene Meldung statt der für eine fehlende Lizenz: das
+        ist ein Versäumnis beim Bauen, nicht das des Nutzers.
+        """
+        lang = self.lang_var.get()
+        if not lizenz.eingerichtet():
+            messagebox.showerror(
+                i18n.t(lang, "lizenz.gesperrt_titel"), i18n.t(lang, "lizenz.nicht_eingerichtet")
+            )
+            return False
+
+        zustand, lic = lizenz.status()
+        if zustand != lizenz.GUELTIG:
+            if zustand == lizenz.ABGELAUFEN:
+                text = i18n.t(lang, "lizenz.status.abgelaufen").format(
+                    datum=lic.ablauf.strftime("%d.%m.%Y")
+                )
+            else:
+                text = i18n.t(lang, "lizenz.status.fehlt")
+            messagebox.showwarning(
+                i18n.t(lang, "lizenz.gesperrt_titel"),
+                text + "\n\n" + i18n.t(lang, "lizenz.gesperrt_hinweis"),
+            )
+            return False
+
+        return True
+
     def _on_run(self):
         """Startet den Suchlauf im Hintergrund."""
         if self.worker.is_running():
+            return
+
+        if not self._lizenz_pruefen_fuer_lauf():
             return
 
         errors = vm.validate(self.csv_var.get(), self.name_var.get())
